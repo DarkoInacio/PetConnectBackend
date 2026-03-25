@@ -16,7 +16,7 @@ async function getMyProfile(req, res, next) {
 // Actualizar mi perfil (no permite cambiar email)
 async function updateMyProfile(req, res, next) {
 	try {
-		const disallowed = ['email', 'password', 'role', 'status'];
+		const disallowed = ['email', 'password', 'role', 'status', 'providerProfile', 'providerType'];
 		for (const key of disallowed) {
 			if (key in req.body) {
 				return res.status(400).json({ message: `No se permite editar el campo: ${key}` });

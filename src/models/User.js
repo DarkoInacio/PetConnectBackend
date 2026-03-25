@@ -5,6 +5,44 @@ const bcrypt = require('bcryptjs');
 
 const USER_ROLES = ['dueno', 'proveedor', 'admin'];
 const PROVIDER_STATUSES = ['en_revision', 'aprobado', 'rechazado'];
+const PROVIDER_KINDS = ['veterinaria', 'paseador', 'cuidador'];
+
+const addressSchema = new mongoose.Schema(
+	{
+		street: { type: String, trim: true },
+		commune: { type: String, trim: true },
+		coordinates: {
+			lat: { type: Number },
+			lng: { type: Number }
+		}
+	},
+	{ _id: false }
+);
+
+const referenceRateSchema = new mongoose.Schema(
+	{
+		amount: { type: Number },
+		currency: { type: String, default: 'CLP', trim: true },
+		unit: { type: String, trim: true }
+	},
+	{ _id: false }
+);
+
+const providerProfileSchema = new mongoose.Schema(
+	{
+		address: addressSchema,
+		licenseNumber: { type: String, trim: true },
+		specialties: [{ type: String, trim: true }],
+		serviceCommunes: [{ type: String, trim: true }],
+		petTypes: [{ type: String, trim: true }],
+		referenceRate: referenceRateSchema,
+		gallery: [{ type: String }],
+		rejectionReason: { type: String },
+		reviewedAt: { type: Date },
+		reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
+	},
+	{ _id: false }
+);
 
 const userSchema = new mongoose.Schema(
 	{
@@ -39,18 +77,29 @@ const userSchema = new mongoose.Schema(
 		},
 		providerType: {
 			type: String,
-			default: null // Ej: veterinaria, paseador, cuidador
+			default: null,
+			validate: {
+				validator(v) {
+					if (v === null || v === undefined) return true;
+					return PROVIDER_KINDS.includes(v);
+				},
+				message: 'Tipo de proveedor inválido'
+			}
 		},
 		phone: {
 			type: String,
 			trim: true
 		},
 		profileImage: {
-			type: String // Ruta relativa en /uploads
+			type: String
+		},
+		providerProfile: {
+			type: providerProfileSchema,
+			default: undefined
 		},
 		status: {
 			type: String,
-			enum: PROVIDER_STATUSES.concat(['activo']), // 'activo' para dueños/admin
+			enum: PROVIDER_STATUSES.concat(['activo']),
 			default: function () {
 				return this.role === 'proveedor' ? 'en_revision' : 'activo';
 			}
@@ -63,7 +112,6 @@ const userSchema = new mongoose.Schema(
 	}
 );
 
-// Hash de contraseña si fue modificada
 userSchema.pre('save', async function (next) {
 	if (!this.isModified('password')) return next();
 	const salt = await bcrypt.genSalt(10);
@@ -71,10 +119,10 @@ userSchema.pre('save', async function (next) {
 	next();
 });
 
-// Método de instancia para comparar contraseña
 userSchema.methods.comparePassword = async function (candidatePassword) {
 	return bcrypt.compare(candidatePassword, this.password);
 };
 
 module.exports = mongoose.model('User', userSchema);
 module.exports.USER_ROLES = USER_ROLES;
+module.exports.PROVIDER_KINDS = PROVIDER_KINDS;
