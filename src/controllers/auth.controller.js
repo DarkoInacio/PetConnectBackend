@@ -5,28 +5,47 @@ const User = require('../models/User');
 const { signToken } = require('../utils/jwt');
 const { sendEmail } = require('../utils/email');
 
-// Registro de usuario
+// Registro de usuario (dueño o admin manual; proveedores usan POST /api/auth/register-provider)
 async function register(req, res, next) {
 	try {
-		const { name, lastName, email, password, role, providerType, phone } = req.body;
+		const { name, lastName, email, password, role, phone } = req.body;
 		if (!name || !lastName || !email || !password) {
 			return res.status(400).json({ message: 'Campos obligatorios: name, lastName, email, password' });
 		}
-		// Validación rol permitido
 		const normalizedRole = role || 'dueno';
 		if (!['dueno', 'proveedor', 'admin'].includes(normalizedRole)) {
 			return res.status(400).json({ message: 'Rol inválido' });
 		}
+		if (normalizedRole === 'proveedor') {
+			return res.status(400).json({
+				message:
+					'Para registrarse como veterinaria, paseador o cuidador use POST /api/auth/register-provider con el formulario completo.'
+			});
+		}
+		if (normalizedRole === 'admin') {
+			return res.status(403).json({ message: 'No está permitido crear cuentas administrador por esta ruta.' });
+		}
 
-		// Crear usuario
+		const normalizedEmail = String(email).toLowerCase().trim();
+		const existing = await User.findOne({ email: normalizedEmail });
+		if (existing) {
+			if (existing.role === 'proveedor') {
+				return res.status(409).json({
+					message:
+						'Este correo ya está registrado como proveedor. Use otro correo para registrarse como dueño.'
+				});
+			}
+			return res.status(409).json({ message: 'El correo ya está registrado' });
+		}
+
 		const user = await User.create({
-			name,
-			lastName,
-			email,
+			name: String(name).trim(),
+			lastName: String(lastName).trim(),
+			email: normalizedEmail,
 			password,
 			role: normalizedRole,
-			providerType: normalizedRole === 'proveedor' ? providerType || null : null,
-			phone
+			providerType: null,
+			phone: phone ? String(phone).trim() : undefined
 		});
 
 		const token = signToken({ id: user._id, role: user.role });
@@ -44,7 +63,7 @@ async function register(req, res, next) {
 		});
 	} catch (error) {
 		if (error.code === 11000 && error.keyPattern && error.keyPattern.email) {
-			return res.status(400).json({ message: 'El correo ya está registrado' });
+			return res.status(409).json({ message: 'El correo ya está registrado' });
 		}
 		next(error);
 	}
@@ -75,7 +94,8 @@ async function login(req, res, next) {
 				lastName: user.lastName,
 				email: user.email,
 				role: user.role,
-				status: user.status
+				status: user.status,
+				...(user.role === 'proveedor' ? { providerType: user.providerType } : {})
 			}
 		});
 	} catch (error) {

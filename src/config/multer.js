@@ -21,7 +21,7 @@ const storage = multer.diskStorage({
 	}
 });
 
-function fileFilter(req, file, cb) {
+function imageFileFilter(req, file, cb) {
 	if (!file.mimetype.startsWith('image/')) {
 		return cb(new Error('Solo se permiten archivos de imagen'), false);
 	}
@@ -30,10 +30,27 @@ function fileFilter(req, file, cb) {
 
 const upload = multer({
 	storage,
-	fileFilter,
+	fileFilter: imageFileFilter,
 	limits: {
-		fileSize: 2 * 1024 * 1024 // 2MB
+		fileSize: 2 * 1024 * 1024
 	}
 });
 
-module.exports = { upload };
+const ALLOWED_PROVIDER_MIMES = new Set(['image/jpeg', 'image/png']);
+
+function providerGalleryFilter(req, file, cb) {
+	if (!ALLOWED_PROVIDER_MIMES.has(file.mimetype)) {
+		return cb(new Error('Solo se permiten imágenes JPG o PNG'), false);
+	}
+	cb(null, true);
+}
+
+const uploadProviderGallery = multer({
+	storage,
+	fileFilter: providerGalleryFilter,
+	limits: {
+		fileSize: 2 * 1024 * 1024
+	}
+});
+
+module.exports = { upload, uploadProviderGallery };
