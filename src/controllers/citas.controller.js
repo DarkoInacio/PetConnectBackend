@@ -3,6 +3,7 @@
 const mongoose = require('mongoose');
 const Cita = require('../models/Cita');
 const User = require('../models/User');
+const CITA_ESTADOS = Cita.CITA_ESTADOS;
 
 /**
  * POST /api/citas
@@ -58,6 +59,81 @@ async function createCita(req, res, next) {
 	}
 }
 
+/**
+ * GET /api/citas/mis-citas
+ */
+async function getMisCitas(req, res, next) {
+	try {
+		const q = req.query;
+		const filter = { dueno: req.user.id };
+
+		if (q.mascota !== undefined && String(q.mascota).trim()) {
+			const esc = String(q.mascota).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+			filter['mascota.nombre'] = new RegExp(esc, 'i');
+		}
+
+		if (q.fechaDesde !== undefined && String(q.fechaDesde).trim()) {
+			const d = new Date(q.fechaDesde);
+			if (Number.isNaN(d.getTime())) {
+				return res.status(400).json({ message: 'fechaDesde inválida' });
+			}
+			filter.fecha = filter.fecha || {};
+			filter.fecha.$gte = d;
+		}
+
+		if (q.fechaHasta !== undefined && String(q.fechaHasta).trim()) {
+			const d = new Date(q.fechaHasta);
+			if (Number.isNaN(d.getTime())) {
+				return res.status(400).json({ message: 'fechaHasta inválida' });
+			}
+			filter.fecha = filter.fecha || {};
+			filter.fecha.$lte = d;
+		}
+
+		if (q.estado !== undefined && String(q.estado).trim()) {
+			const e = String(q.estado).trim();
+			if (!CITA_ESTADOS.includes(e)) {
+				return res.status(400).json({ message: `estado debe ser uno de: ${CITA_ESTADOS.join(', ')}` });
+			}
+			filter.estado = e;
+		}
+
+		const citas = await Cita.find(filter)
+			.populate('proveedor', 'name lastName email providerType')
+			.sort({ fecha: -1 })
+			.lean();
+
+		return res.status(200).json({ citas });
+	} catch (err) {
+		next(err);
+	}
+}
+
+/**
+ * GET /api/citas/proximas
+ */
+async function getProximasCitas(req, res, next) {
+	try {
+		const start = new Date();
+		start.setHours(0, 0, 0, 0);
+
+		const citas = await Cita.find({
+			dueno: req.user.id,
+			fecha: { $gte: start },
+			estado: { $in: ['pendiente', 'confirmada'] }
+		})
+			.populate('proveedor', 'name lastName email providerType')
+			.sort({ fecha: 1 })
+			.lean();
+
+		return res.status(200).json({ citas });
+	} catch (err) {
+		next(err);
+	}
+}
+
 module.exports = {
-	createCita
+	createCita,
+	getMisCitas,
+	getProximasCitas
 };
