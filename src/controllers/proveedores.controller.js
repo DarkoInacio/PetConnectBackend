@@ -36,6 +36,61 @@ async function getProviderPublicProfile(req, res, next) {
 	}
 }
 
+const PROVIDER_KINDS = ['veterinaria', 'paseador', 'cuidador'];
+
+/**
+ * GET /api/proveedores — listado público paginado
+ */
+async function listApprovedProviders(req, res, next) {
+	try {
+		const tipo = req.query.tipo;
+		const ciudad = req.query.ciudad;
+		const pagina = Math.max(1, parseInt(req.query.pagina, 10) || 1);
+		const limiteRaw = parseInt(req.query.limite, 10) || 10;
+		const limite = Math.min(100, Math.max(1, limiteRaw));
+
+		const filter = { role: 'proveedor', status: 'aprobado' };
+		if (tipo !== undefined && String(tipo).trim()) {
+			if (!PROVIDER_KINDS.includes(String(tipo).trim())) {
+				return res.status(400).json({ message: 'tipo debe ser veterinaria, paseador o cuidador' });
+			}
+			filter.providerType = String(tipo).trim();
+		}
+		if (ciudad !== undefined && String(ciudad).trim()) {
+			const esc = String(ciudad).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+			const re = new RegExp(esc, 'i');
+			filter.$or = [
+				{ 'providerProfile.address.city': re },
+				{ 'providerProfile.address.commune': re }
+			];
+		}
+
+		const skip = (pagina - 1) * limite;
+
+		const [total, docs] = await Promise.all([
+			User.countDocuments(filter),
+			User.find(filter)
+				.select('name lastName providerType providerProfile')
+				.sort({ createdAt: -1 })
+				.skip(skip)
+				.limit(limite)
+				.lean()
+		]);
+
+		const resultados = docs.map((d) => ({
+			id: d._id,
+			name: d.name,
+			lastName: d.lastName,
+			providerType: d.providerType,
+			perfil: toPublicProviderProfile(d.providerProfile)
+		}));
+
+		return res.status(200).json({ total, pagina, limite, resultados });
+	} catch (err) {
+		next(err);
+	}
+}
+
 function normalizeServices(raw) {
 	if (raw === undefined) return undefined;
 	if (!Array.isArray(raw)) {
@@ -153,6 +208,7 @@ async function updateMyProviderProfile(req, res, next) {
 
 module.exports = {
 	getProviderPublicProfile,
+	listApprovedProviders,
 	updateMyProviderProfile,
 	toPublicProviderProfile
 };
