@@ -11,10 +11,21 @@ const addressSchema = new mongoose.Schema(
 	{
 		street: { type: String, trim: true },
 		commune: { type: String, trim: true },
+		city: { type: String, trim: true },
 		coordinates: {
 			lat: { type: Number },
 			lng: { type: Number }
 		}
+	},
+	{ _id: false }
+);
+
+const socialMediaSchema = new mongoose.Schema(
+	{
+		instagram: { type: String, trim: true },
+		facebook: { type: String, trim: true },
+		twitter: { type: String, trim: true },
+		website: { type: String, trim: true }
 	},
 	{ _id: false }
 );
@@ -32,9 +43,13 @@ const providerProfileSchema = new mongoose.Schema(
 	{
 		address: addressSchema,
 		licenseNumber: { type: String, trim: true },
+		description: { type: String, trim: true },
+		schedule: { type: String, trim: true },
+		services: [{ type: String, trim: true }],
 		specialties: [{ type: String, trim: true }],
 		serviceCommunes: [{ type: String, trim: true }],
 		petTypes: [{ type: String, trim: true }],
+		socialMedia: socialMediaSchema,
 		referenceRate: referenceRateSchema,
 		gallery: [{ type: String }],
 		rejectionReason: { type: String },
