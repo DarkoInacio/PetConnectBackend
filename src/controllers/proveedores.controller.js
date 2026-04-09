@@ -2,6 +2,7 @@
 
 const mongoose = require('mongoose');
 const User = require('../models/User');
+const { distanceKm } = require('../utils/haversine');
 
 const PRIVATE_PROFILE_KEYS = new Set(['rejectionReason', 'reviewedAt', 'reviewedBy']);
 
@@ -78,6 +79,120 @@ async function listApprovedProviders(req, res, next) {
 		]);
 
 		const resultados = docs.map((d) => ({
+			id: d._id,
+			name: d.name,
+			lastName: d.lastName,
+			providerType: d.providerType,
+			perfil: toPublicProviderProfile(d.providerProfile)
+		}));
+
+		return res.status(200).json({ total, pagina, limite, resultados });
+	} catch (err) {
+		next(err);
+	}
+}
+
+/**
+ * GET /api/proveedores/buscar — filtros dinámicos + Haversine opcional
+ */
+async function searchProviders(req, res, next) {
+	try {
+		const q = req.query;
+		const pagina = Math.max(1, parseInt(q.pagina, 10) || 1);
+		const limiteRaw = parseInt(q.limite, 10) || 10;
+		const limite = Math.min(100, Math.max(1, limiteRaw));
+
+		const filter = { role: 'proveedor', status: 'aprobado' };
+
+		if (q.tipo !== undefined && String(q.tipo).trim()) {
+			const tipo = String(q.tipo).trim();
+			if (!PROVIDER_KINDS.includes(tipo)) {
+				return res.status(400).json({ message: 'tipo debe ser veterinaria, paseador o cuidador' });
+			}
+			filter.providerType = tipo;
+		}
+
+		if (q.servicio !== undefined && String(q.servicio).trim()) {
+			const esc = String(q.servicio).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+			filter['providerProfile.services'] = new RegExp(esc, 'i');
+		}
+
+		if (q.ciudad !== undefined && String(q.ciudad).trim()) {
+			const esc = String(q.ciudad).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+			const re = new RegExp(esc, 'i');
+			filter.$or = [
+				{ 'providerProfile.address.city': re },
+				{ 'providerProfile.address.commune': re }
+			];
+		}
+
+		const amountCond = {};
+		if (q.precioMin !== undefined && String(q.precioMin).trim() !== '') {
+			const v = Number(q.precioMin);
+			if (!Number.isNaN(v)) {
+				amountCond.$gte = v;
+			}
+		}
+		if (q.precioMax !== undefined && String(q.precioMax).trim() !== '') {
+			const v = Number(q.precioMax);
+			if (!Number.isNaN(v)) {
+				amountCond.$lte = v;
+			}
+		}
+		if (Object.keys(amountCond).length > 0) {
+			filter['providerProfile.referenceRate.amount'] = amountCond;
+		}
+
+		const latRaw = q.lat;
+		const lngRaw = q.lng;
+		const radioRaw = q.radio;
+		let hasGeo = false;
+		let lat0;
+		let lng0;
+		let radioKm;
+
+		if (latRaw !== undefined && lngRaw !== undefined && radioRaw !== undefined) {
+			lat0 = Number(latRaw);
+			lng0 = Number(lngRaw);
+			radioKm = Number(radioRaw);
+			if (Number.isNaN(lat0) || Number.isNaN(lng0) || Number.isNaN(radioKm)) {
+				return res.status(400).json({ message: 'lat, lng y radio deben ser números válidos' });
+			}
+			if (radioKm < 0) {
+				return res.status(400).json({ message: 'radio debe ser mayor o igual a 0' });
+			}
+			hasGeo = true;
+			filter['providerProfile.address.coordinates.lat'] = { $exists: true, $ne: null };
+			filter['providerProfile.address.coordinates.lng'] = { $exists: true, $ne: null };
+		}
+
+		let docs = await User.find(filter)
+			.select('name lastName providerType providerProfile')
+			.sort({ createdAt: -1 })
+			.lean();
+
+		if (hasGeo) {
+			const filtered = docs
+				.map((d) => {
+					const latp = d.providerProfile?.address?.coordinates?.lat;
+					const lngp = d.providerProfile?.address?.coordinates?.lng;
+					if (latp == null || lngp == null) {
+						return null;
+					}
+					const dist = distanceKm(lat0, lng0, latp, lngp);
+					return dist <= radioKm ? { d, dist } : null;
+				})
+				.filter(Boolean)
+				.sort((a, b) => a.dist - b.dist);
+
+			docs = filtered.map((x) => x.d);
+		}
+
+		const total = docs.length;
+		const skip = (pagina - 1) * limite;
+		const pageDocs = docs.slice(skip, skip + limite);
+
+		const resultados = pageDocs.map((d) => ({
 			id: d._id,
 			name: d.name,
 			lastName: d.lastName,
@@ -209,6 +324,7 @@ async function updateMyProviderProfile(req, res, next) {
 module.exports = {
 	getProviderPublicProfile,
 	listApprovedProviders,
+	searchProviders,
 	updateMyProviderProfile,
 	toPublicProviderProfile
 };

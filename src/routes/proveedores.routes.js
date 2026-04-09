@@ -7,10 +7,13 @@ const { authorizeRoles } = require('../middlewares/roles');
 const {
 	getProviderPublicProfile,
 	listApprovedProviders,
+	searchProviders,
 	updateMyProviderProfile
 } = require('../controllers/proveedores.controller');
 
 router.put('/mi-perfil', auth, authorizeRoles('proveedor'), updateMyProviderProfile);
+
+router.get('/buscar', searchProviders);
 
 router.get('/', listApprovedProviders);
 
