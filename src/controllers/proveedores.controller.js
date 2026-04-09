@@ -83,7 +83,7 @@ async function listApprovedProviders(req, res, next) {
 			name: d.name,
 			lastName: d.lastName,
 			providerType: d.providerType,
-			perfil: toPublicProviderProfile(d.providerProfile)
+			providerProfile: toPublicProviderProfile(d.providerProfile)
 		}));
 
 		return res.status(200).json({ total, pagina, limite, resultados });
@@ -114,7 +114,7 @@ async function searchProviders(req, res, next) {
 
 		if (q.servicio !== undefined && String(q.servicio).trim()) {
 			const esc = String(q.servicio).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-			filter['providerProfile.services'] = new RegExp(esc, 'i');
+			filter['providerProfile.specialties'] = new RegExp(esc, 'i');
 		}
 
 		if (q.ciudad !== undefined && String(q.ciudad).trim()) {
@@ -197,7 +197,7 @@ async function searchProviders(req, res, next) {
 			name: d.name,
 			lastName: d.lastName,
 			providerType: d.providerType,
-			perfil: toPublicProviderProfile(d.providerProfile)
+			providerProfile: toPublicProviderProfile(d.providerProfile)
 		}));
 
 		return res.status(200).json({ total, pagina, limite, resultados });
