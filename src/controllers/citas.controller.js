@@ -142,6 +142,12 @@ function duenoIdString(citaDoc) {
 	return d._id ? d._id.toString() : d.toString();
 }
 
+function proveedorIdString(citaDoc) {
+	const p = citaDoc.proveedor;
+	if (!p) return null;
+	return p._id ? p._id.toString() : p.toString();
+}
+
 /**
  * PATCH /api/citas/:id/cancelar
  */
@@ -250,10 +256,51 @@ async function reagendarCita(req, res, next) {
 	}
 }
 
+/**
+ * PATCH /api/citas/:id/diagnostico
+ */
+async function registrarDiagnostico(req, res, next) {
+	try {
+		const { id } = req.params;
+		const { diagnostico } = req.body || {};
+
+		if (!mongoose.isValidObjectId(id)) {
+			return res.status(400).json({ message: 'Id de cita inválido' });
+		}
+
+		if (diagnostico === undefined || diagnostico === null || !String(diagnostico).trim()) {
+			return res.status(400).json({ message: 'diagnostico es obligatorio' });
+		}
+
+		const cita = await Cita.findById(id);
+
+		if (!cita) {
+			return res.status(404).json({ message: 'Cita no encontrada' });
+		}
+
+		if (proveedorIdString(cita) !== req.user.id) {
+			return res.status(403).json({ message: 'Solo el proveedor de la cita puede registrar el diagnóstico' });
+		}
+
+		cita.diagnostico = String(diagnostico).trim();
+		cita.estado = 'completada';
+		await cita.save();
+
+		const updated = await Cita.findById(cita._id)
+			.populate('proveedor', 'name lastName email providerType')
+			.populate('dueno', 'name lastName email');
+
+		return res.status(200).json({ message: 'Diagnóstico registrado', cita: updated });
+	} catch (err) {
+		next(err);
+	}
+}
+
 module.exports = {
 	createCita,
 	getMisCitas,
 	getProximasCitas,
 	cancelarCita,
-	reagendarCita
+	reagendarCita,
+	registrarDiagnostico
 };

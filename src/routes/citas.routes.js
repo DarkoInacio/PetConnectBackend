@@ -9,7 +9,8 @@ const {
 	getMisCitas,
 	getProximasCitas,
 	cancelarCita,
-	reagendarCita
+	reagendarCita,
+	registrarDiagnostico
 } = require('../controllers/citas.controller');
 
 router.post('/', auth, authorizeRoles('dueno'), createCita);
@@ -21,5 +22,7 @@ router.get('/proximas', auth, authorizeRoles('dueno'), getProximasCitas);
 router.patch('/:id/cancelar', auth, authorizeRoles('dueno'), cancelarCita);
 
 router.patch('/:id/reagendar', auth, authorizeRoles('dueno'), reagendarCita);
+
+router.patch('/:id/diagnostico', auth, authorizeRoles('proveedor'), registrarDiagnostico);
 
 module.exports = router;
