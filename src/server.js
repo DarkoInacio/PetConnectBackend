@@ -7,6 +7,7 @@ const http = require('http');
 const app = require('./app');
 const { connectMongo } = require('./config/db');
 const { startCitasCronJobs } = require('./jobs/citasCron');
+const { startAppointmentReminderJob } = require('./jobs/appointmentReminders.job');
 
 const PORT = process.env.PORT || 3000;
 
@@ -21,6 +22,10 @@ async function startServer() {
 	server.listen(PORT, () => {
 		console.log(`Servidor escuchando en puerto ${PORT}`);
 	});
+
+	if (process.env.NODE_ENV !== 'test') {
+		startAppointmentReminderJob();
+	}
 
 	// Manejo de señales para apagado limpio
 	const shutdown = (signal) => {
