@@ -6,6 +6,7 @@ require('dotenv').config();
 const http = require('http');
 const app = require('./app');
 const { connectMongo } = require('./config/db');
+const { startCitasCronJobs } = require('./jobs/citasCron');
 const { startAppointmentReminderJob } = require('./jobs/appointmentReminders.job');
 
 const PORT = process.env.PORT || 3000;
@@ -13,6 +14,8 @@ const PORT = process.env.PORT || 3000;
 async function startServer() {
 	// Conectar a MongoDB
 	await connectMongo();
+
+	startCitasCronJobs();
 
 	// Iniciar servidor HTTP
 	const server = http.createServer(app);

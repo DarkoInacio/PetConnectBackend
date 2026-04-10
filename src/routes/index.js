@@ -9,5 +9,7 @@ router.use('/provider/agenda', require('./providerAgenda.routes'));
 router.use('/appointments', require('./appointments.routes'));
 router.use('/admin/jobs', require('./adminJobs.routes'));
 router.use('/admin', require('./admin.routes'));
+router.use('/proveedores', require('./proveedores.routes'));
+router.use('/citas', require('./citas.routes'));
 
 module.exports = router;
