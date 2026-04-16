@@ -32,6 +32,73 @@ async function listPendingProviders(req, res, next) {
 	}
 }
 
+function normalizeStatuses(rawStatuses) {
+	if (!rawStatuses) return [];
+	const asArray = Array.isArray(rawStatuses) ? rawStatuses : [rawStatuses];
+	return asArray
+		.join(',')
+		.split(',')
+		.map((s) => String(s).trim())
+		.filter(Boolean);
+}
+
+async function listProvidersByStatuses(req, res, next, statuses) {
+	try {
+		const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+		const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 20));
+		const skip = (page - 1) * limit;
+
+		const ALLOWED_STATUSES = ['aprobado', 'rechazado'];
+		const normalized = Array.isArray(statuses) ? statuses : [];
+
+		if (!normalized.length) {
+			return res.status(400).json({ message: 'status inválido' });
+		}
+		if (!normalized.every((s) => ALLOWED_STATUSES.includes(s))) {
+			return res.status(400).json({ message: 'status inválido. Usa aprobado y/o rechazado' });
+		}
+
+		const filter = { role: 'proveedor', status: { $in: normalized } };
+		const [items, total] = await Promise.all([
+			User.find(filter)
+				.sort({ createdAt: 1 })
+				.skip(skip)
+				.limit(limit)
+				.select('-password -passwordResetToken -passwordResetExpires')
+				.lean(),
+			User.countDocuments(filter)
+		]);
+
+		return res.status(200).json({
+			items,
+			page,
+			limit,
+			total,
+			totalPages: Math.ceil(total / limit) || 1
+		});
+	} catch (error) {
+		next(error);
+	}
+}
+
+// Enlista aprobados y/o rechazados (juntos o filtrado por query)
+// GET /api/admin/providers?status=aprobado,rechazado
+async function listApprovedRejectedProviders(req, res, next) {
+	const statuses = normalizeStatuses(req.query.status);
+	const finalStatuses = statuses.length ? statuses : ['aprobado', 'rechazado'];
+	return listProvidersByStatuses(req, res, next, finalStatuses);
+}
+
+// Enlista solo aprobados
+async function listApprovedProviders(req, res, next) {
+	return listProvidersByStatuses(req, res, next, ['aprobado']);
+}
+
+// Enlista solo rechazados
+async function listRejectedProviders(req, res, next) {
+	return listProvidersByStatuses(req, res, next, ['rechazado']);
+}
+
 async function approveProvider(req, res, next) {
 	try {
 		const user = await User.findById(req.params.userId);
@@ -121,4 +188,11 @@ function escapeHtml(s) {
 		.replace(/"/g, '&quot;');
 }
 
-module.exports = { listPendingProviders, approveProvider, rejectProvider };
+module.exports = {
+	listPendingProviders,
+	listApprovedRejectedProviders,
+	listApprovedProviders,
+	listRejectedProviders,
+	approveProvider,
+	rejectProvider
+};
