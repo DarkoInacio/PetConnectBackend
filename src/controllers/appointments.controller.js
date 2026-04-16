@@ -4,8 +4,41 @@ const mongoose = require('mongoose');
 const Appointment = require('../models/Appointment');
 const AvailabilitySlot = require('../models/AvailabilitySlot');
 const User = require('../models/User');
+const { notifyProveedorAppointmentCancelada } = require('../utils/notifyAppointmentProveedor');
 
 const MIN_HOURS_BEFORE_CANCEL = 2;
+const CANCELLABLE_STATUSES = ['pending_confirmation', 'confirmed'];
+const CREATABLE_STATUSES = ['pending_confirmation', 'confirmed'];
+
+function parsePet(rawPet) {
+	if (rawPet === undefined || rawPet === null) return undefined;
+	if (typeof rawPet !== 'object') {
+		return { error: 'pet debe ser un objeto con name y species' };
+	}
+
+	const name = rawPet.name == null ? '' : String(rawPet.name).trim();
+	const species = rawPet.species == null ? '' : String(rawPet.species).trim();
+	if (!name || !species) {
+		return { error: 'pet debe incluir name y species' };
+	}
+
+	return { value: { name, species } };
+}
+
+function resolveInitialAppointmentStatus(rawStatus) {
+	if (rawStatus === undefined || rawStatus === null || String(rawStatus).trim() === '') {
+		// Por defecto la cita queda pendiente de confirmacion para alinear el flujo HU-14.
+		return { value: 'pending_confirmation' };
+	}
+
+	const status = String(rawStatus).trim();
+	if (!CREATABLE_STATUSES.includes(status)) {
+		return {
+			error: `status invalido. Valores permitidos: ${CREATABLE_STATUSES.join(', ')}`
+		};
+	}
+	return { value: status };
+}
 
 async function listAvailableSlotsByProvider(req, res, next) {
 	try {
@@ -50,7 +83,7 @@ async function listAvailableSlotsByProvider(req, res, next) {
 
 async function createAppointment(req, res, next) {
 	try {
-		const { providerId, slotId, reason } = req.body;
+		const { providerId, slotId, reason, pet, status } = req.body;
 		if (!providerId || !slotId) {
 			return res.status(400).json({ message: 'Campos obligatorios: providerId, slotId' });
 		}
@@ -64,6 +97,15 @@ async function createAppointment(req, res, next) {
 		}
 		if (provider.status !== 'aprobado') {
 			return res.status(400).json({ message: 'El proveedor no esta disponible para citas' });
+		}
+
+		const parsedPet = parsePet(pet);
+		if (parsedPet && parsedPet.error) {
+			return res.status(400).json({ message: parsedPet.error });
+		}
+		const parsedStatus = resolveInitialAppointmentStatus(status);
+		if (parsedStatus.error) {
+			return res.status(400).json({ message: parsedStatus.error });
 		}
 
 		// Operacion atomica para consumir el bloque y evitar doble reserva.
@@ -85,8 +127,9 @@ async function createAppointment(req, res, next) {
 				slotId,
 				startAt: consumedSlot.startAt,
 				endAt: consumedSlot.endAt,
+				pet: parsedPet?.value,
 				reason: reason || undefined,
-				status: 'confirmed'
+				status: parsedStatus.value
 			});
 
 			return res.status(201).json({
@@ -122,29 +165,68 @@ async function listMyAppointments(req, res, next) {
 
 async function cancelMyAppointment(req, res, next) {
 	try {
+		const cancellationReason =
+			req.body?.cancellationReason == null ? '' : String(req.body.cancellationReason).trim();
+		if (!cancellationReason) {
+			return res.status(400).json({ message: 'cancellationReason es obligatorio' });
+		}
+		if (cancellationReason.length > 200) {
+			return res.status(400).json({ message: 'cancellationReason no puede superar 200 caracteres' });
+		}
+
 		const appointment = await Appointment.findOne({
 			_id: req.params.id,
 			ownerId: req.user.id
-		});
+		})
+			.populate('providerId', 'name lastName email')
+			.populate('ownerId', 'name lastName email');
 		if (!appointment) {
 			return res.status(404).json({ message: 'Cita no encontrada' });
 		}
-		if (appointment.status !== 'confirmed') {
-			return res.status(400).json({ message: 'Solo se pueden cancelar citas confirmadas' });
+		if (!CANCELLABLE_STATUSES.includes(appointment.status)) {
+			return res
+				.status(400)
+				.json({ message: 'Solo se pueden cancelar citas pendientes de confirmacion o confirmadas' });
 		}
 
-		const msBeforeStart = appointment.startAt.getTime() - Date.now();
-		const minMsRequired = MIN_HOURS_BEFORE_CANCEL * 60 * 60 * 1000;
-		if (msBeforeStart < minMsRequired) {
-			return res.status(400).json({
-				message: `Solo puedes cancelar con al menos ${MIN_HOURS_BEFORE_CANCEL} horas de anticipacion`
-			});
+		if (appointment.status === 'confirmed') {
+			const msBeforeStart = appointment.startAt.getTime() - Date.now();
+			const minMsRequired = MIN_HOURS_BEFORE_CANCEL * 60 * 60 * 1000;
+			if (msBeforeStart < minMsRequired) {
+				return res.status(400).json({
+					message: `Solo puedes cancelar con al menos ${MIN_HOURS_BEFORE_CANCEL} horas de anticipacion`
+				});
+			}
 		}
 
 		appointment.status = 'cancelled_by_owner';
 		appointment.cancelledAt = new Date();
-		appointment.cancellationReason = req.body.cancellationReason || undefined;
+		appointment.cancellationReason = cancellationReason;
 		await appointment.save();
+
+		await AvailabilitySlot.updateOne(
+			{
+				providerId: appointment.providerId._id || appointment.providerId,
+				startAt: appointment.startAt
+			},
+			{
+				$setOnInsert: {
+					providerId: appointment.providerId._id || appointment.providerId,
+					startAt: appointment.startAt,
+					endAt: appointment.endAt,
+					status: 'available'
+				}
+			},
+			{ upsert: true }
+		);
+
+		notifyProveedorAppointmentCancelada({
+			proveedorEmail: appointment.providerId?.email,
+			proveedorDoc: appointment.providerId,
+			duenoDoc: appointment.ownerId,
+			appointment,
+			cancellationReason
+		}).catch((err) => console.error('notifyProveedorAppointmentCancelada:', err.message));
 
 		return res.status(200).json({ message: 'Cita cancelada correctamente', appointment });
 	} catch (error) {
