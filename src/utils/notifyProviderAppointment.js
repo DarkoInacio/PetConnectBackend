@@ -11,20 +11,20 @@ function escapeHtml(s) {
 		.replace(/"/g, '&quot;');
 }
 
-function duenoLinea(duenoDoc) {
-	if (!duenoDoc) return 'Un dueño';
-	const nombre = `${duenoDoc.name || ''} ${duenoDoc.lastName || ''}`.trim();
+function ownerLine(ownerDoc) {
+	if (!ownerDoc) return 'Un dueño';
+	const nombre = `${ownerDoc.name || ''} ${ownerDoc.lastName || ''}`.trim();
 	return escapeHtml(nombre || 'Dueño');
 }
 
-async function notifyProveedorCitaCancelada({ proveedorEmail, proveedorNombre, duenoDoc, cita }) {
-	if (!proveedorEmail) {
-		console.warn('notifyProveedorCitaCancelada: proveedor sin correo.');
+async function notifyProviderAppointmentCanceled({ providerEmail, providerName, ownerDoc, cita }) {
+	if (!providerEmail) {
+		console.warn('notifyProviderAppointmentCanceled: proveedor sin correo.');
 		return;
 	}
 	const html = `
-		<p>Hola ${escapeHtml(proveedorNombre)},</p>
-		<p><strong>${duenoLinea(duenoDoc)}</strong> ha cancelado una cita en PetConnect.</p>
+		<p>Hola ${escapeHtml(providerName)},</p>
+		<p><strong>${ownerLine(ownerDoc)}</strong> ha cancelado una cita en PetConnect.</p>
 		<ul>
 			<li><strong>Servicio:</strong> ${escapeHtml(cita.servicio)}</li>
 			<li><strong>Fecha:</strong> ${escapeHtml(new Date(cita.fecha).toISOString())}</li>
@@ -33,7 +33,7 @@ async function notifyProveedorCitaCancelada({ proveedorEmail, proveedorNombre, d
 	`;
 	try {
 		await sendEmail({
-			to: proveedorEmail,
+			to: providerEmail,
 			subject: 'PetConnect: cita cancelada por el dueño',
 			html
 		});
@@ -42,14 +42,14 @@ async function notifyProveedorCitaCancelada({ proveedorEmail, proveedorNombre, d
 	}
 }
 
-async function notifyProveedorCitaReagendada({ proveedorEmail, proveedorNombre, duenoDoc, cita, fechaAnterior }) {
-	if (!proveedorEmail) {
-		console.warn('notifyProveedorCitaReagendada: proveedor sin correo.');
+async function notifyProviderAppointmentRescheduled({ providerEmail, providerName, ownerDoc, cita, fechaAnterior }) {
+	if (!providerEmail) {
+		console.warn('notifyProviderAppointmentRescheduled: proveedor sin correo.');
 		return;
 	}
 	const html = `
-		<p>Hola ${escapeHtml(proveedorNombre)},</p>
-		<p><strong>${duenoLinea(duenoDoc)}</strong> ha reagendado una cita en PetConnect.</p>
+		<p>Hola ${escapeHtml(providerName)},</p>
+		<p><strong>${ownerLine(ownerDoc)}</strong> ha reagendado una cita en PetConnect.</p>
 		<ul>
 			<li><strong>Servicio:</strong> ${escapeHtml(cita.servicio)}</li>
 			<li><strong>Fecha anterior:</strong> ${escapeHtml(new Date(fechaAnterior).toISOString())}</li>
@@ -59,7 +59,7 @@ async function notifyProveedorCitaReagendada({ proveedorEmail, proveedorNombre, 
 	`;
 	try {
 		await sendEmail({
-			to: proveedorEmail,
+			to: providerEmail,
 			subject: 'PetConnect: cita reagendada',
 			html
 		});
@@ -69,6 +69,6 @@ async function notifyProveedorCitaReagendada({ proveedorEmail, proveedorNombre, 
 }
 
 module.exports = {
-	notifyProveedorCitaCancelada,
-	notifyProveedorCitaReagendada
+	notifyProviderAppointmentCanceled,
+	notifyProviderAppointmentRescheduled
 };

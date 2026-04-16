@@ -9,7 +9,7 @@ function startOfLocalDay(d = new Date()) {
 	return x;
 }
 
-function startCitasCronJobs() {
+function startOwnerAppointmentsCronJobs() {
 	// Cada día a medianoche (zona horaria del servidor)
 	cron.schedule('0 0 * * *', async () => {
 		try {
@@ -27,4 +27,4 @@ function startCitasCronJobs() {
 	});
 }
 
-module.exports = { startCitasCronJobs };
+module.exports = { startOwnerAppointmentsCronJobs };
