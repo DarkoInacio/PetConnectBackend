@@ -88,4 +88,51 @@ async function listUnifiedMine(req, res, next) {
 	}
 }
 
-module.exports = { listUnifiedMine };
+/**
+ * GET /api/bookings/provider/mine — citas y reservas donde soy proveedor
+ */
+async function listUnifiedProviderMine(req, res, next) {
+	try {
+		const providerId = req.user.id;
+
+		const [appointments, citas] = await Promise.all([
+			Appointment.find({ providerId })
+				.sort({ startAt: -1 })
+				.populate('ownerId', 'name lastName email')
+				.lean(),
+			Cita.find({ proveedor: providerId })
+				.sort({ fecha: -1 })
+				.populate('dueno', 'name lastName email')
+				.lean()
+		]);
+
+		const linked = new Set(
+			appointments.filter((a) => a.legacyCitaId).map((a) => String(a.legacyCitaId))
+		);
+
+		const orphanCitas = citas.filter((c) => !linked.has(String(c._id)));
+
+		const merged = [
+			...appointments.map((a) => ({
+				...normalizeAppointment(a),
+				owner: a.ownerId
+			})),
+			...orphanCitas.map((c) => normalizeCita(c))
+		];
+
+		merged.sort((a, b) => {
+			const ta = new Date(a.startAt || 0).getTime();
+			const tb = new Date(b.startAt || 0).getTime();
+			return tb - ta;
+		});
+
+		return res.status(200).json({
+			total: merged.length,
+			items: merged
+		});
+	} catch (err) {
+		next(err);
+	}
+}
+
+module.exports = { listUnifiedMine, listUnifiedProviderMine };

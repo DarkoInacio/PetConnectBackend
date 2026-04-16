@@ -3,6 +3,7 @@
 const mongoose = require('mongoose');
 const Appointment = require('../models/Appointment');
 const AvailabilitySlot = require('../models/AvailabilitySlot');
+const Cita = require('../models/Cita');
 const User = require('../models/User');
 const { notifyProveedorAppointmentCancelada } = require('../utils/notifyAppointmentProveedor');
 
@@ -238,9 +239,167 @@ async function cancelMyAppointment(req, res, next) {
 	}
 }
 
+async function confirmProviderAppointment(req, res, next) {
+	try {
+		const id = req.params.id;
+		if (!mongoose.Types.ObjectId.isValid(id)) {
+			return res.status(400).json({ message: 'Id invalido' });
+		}
+
+		const appointment = await Appointment.findOne({
+			_id: id,
+			providerId: req.user.id
+		});
+		if (!appointment) {
+			return res.status(404).json({ message: 'Reserva no encontrada' });
+		}
+		if (appointment.status !== 'pending_confirmation') {
+			return res.status(400).json({ message: 'Solo se pueden confirmar reservas pendientes de confirmacion' });
+		}
+
+		appointment.status = 'confirmed';
+		await appointment.save();
+
+		if (appointment.bookingSource === 'legacy_cita' && appointment.legacyCitaId) {
+			await Cita.updateOne({ _id: appointment.legacyCitaId }, { $set: { estado: 'confirmada' } }).catch(
+				(e) => console.error('[HU-14] sync confirm Cita:', e.message)
+			);
+		}
+
+		const fresh = await Appointment.findById(appointment._id)
+			.populate('ownerId', 'name lastName email')
+			.lean();
+		return res.status(200).json({ message: 'Reserva confirmada', appointment: fresh });
+	} catch (error) {
+		next(error);
+	}
+}
+
+async function cancelProviderAppointment(req, res, next) {
+	try {
+		const id = req.params.id;
+		if (!mongoose.Types.ObjectId.isValid(id)) {
+			return res.status(400).json({ message: 'Id invalido' });
+		}
+
+		const cancellationReason =
+			req.body?.cancellationReason == null ? '' : String(req.body.cancellationReason).trim();
+		if (!cancellationReason) {
+			return res.status(400).json({ message: 'cancellationReason es obligatorio' });
+		}
+		if (cancellationReason.length > 200) {
+			return res.status(400).json({ message: 'cancellationReason no puede superar 200 caracteres' });
+		}
+
+		const appointment = await Appointment.findOne({
+			_id: id,
+			providerId: req.user.id
+		});
+		if (!appointment) {
+			return res.status(404).json({ message: 'Reserva no encontrada' });
+		}
+		if (!CANCELLABLE_STATUSES.includes(appointment.status)) {
+			return res
+				.status(400)
+				.json({ message: 'Solo se pueden cancelar reservas pendientes de confirmacion o confirmadas' });
+		}
+
+		if (appointment.status === 'confirmed') {
+			const msBeforeStart = appointment.startAt.getTime() - Date.now();
+			const minMsRequired = MIN_HOURS_BEFORE_CANCEL * 60 * 60 * 1000;
+			if (msBeforeStart < minMsRequired) {
+				return res.status(400).json({
+					message: `Solo puedes cancelar con al menos ${MIN_HOURS_BEFORE_CANCEL} horas de anticipacion`
+				});
+			}
+		}
+
+		appointment.status = 'cancelled_by_provider';
+		appointment.cancelledAt = new Date();
+		appointment.cancellationReason = cancellationReason;
+		await appointment.save();
+
+		const src = appointment.bookingSource || 'availability_slot';
+		if (src === 'availability_slot' && appointment.slotId) {
+			await AvailabilitySlot.updateOne(
+				{
+					providerId: appointment.providerId,
+					startAt: appointment.startAt
+				},
+				{
+					$setOnInsert: {
+						providerId: appointment.providerId,
+						startAt: appointment.startAt,
+						endAt: appointment.endAt,
+						status: 'available'
+					}
+				},
+				{ upsert: true }
+			);
+		}
+
+		if (src === 'legacy_cita' && appointment.legacyCitaId) {
+			await Cita.updateOne({ _id: appointment.legacyCitaId }, { $set: { estado: 'cancelada' } }).catch(
+				(e) => console.error('[HU-14] sync cancel provider Cita:', e.message)
+			);
+		}
+
+		const fresh = await Appointment.findById(appointment._id)
+			.populate('ownerId', 'name lastName email')
+			.lean();
+		return res.status(200).json({ message: 'Reserva cancelada', appointment: fresh });
+	} catch (error) {
+		next(error);
+	}
+}
+
+/**
+ * Marcar como completada solo solicitudes paseador/cuidador (walker_request).
+ * No aplica a legacy_cita ni a availability_slot (veterinaria usa diagnóstico / otros flujos).
+ */
+async function completeProviderWalkerAppointment(req, res, next) {
+	try {
+		const id = req.params.id;
+		if (!mongoose.Types.ObjectId.isValid(id)) {
+			return res.status(400).json({ message: 'Id invalido' });
+		}
+
+		const appointment = await Appointment.findOne({
+			_id: id,
+			providerId: req.user.id
+		});
+		if (!appointment) {
+			return res.status(404).json({ message: 'Reserva no encontrada' });
+		}
+		if (appointment.bookingSource !== 'walker_request') {
+			return res.status(400).json({
+				message: 'Marcar completada aquí solo aplica a solicitudes de paseo o cuidado (walker_request)'
+			});
+		}
+		if (!['pending_confirmation', 'confirmed'].includes(appointment.status)) {
+			return res.status(400).json({
+				message: 'Solo se puede completar una solicitud pendiente o ya confirmada'
+			});
+		}
+
+		appointment.status = 'completed';
+		await appointment.save();
+
+		const fresh = await Appointment.findById(appointment._id)
+			.populate('ownerId', 'name lastName email')
+			.lean();
+		return res.status(200).json({ message: 'Servicio marcado como completado', appointment: fresh });
+	} catch (error) {
+		next(error);
+	}
+}
+
 module.exports = {
 	listAvailableSlotsByProvider,
 	createAppointment,
 	listMyAppointments,
-	cancelMyAppointment
+	cancelMyAppointment,
+	confirmProviderAppointment,
+	cancelProviderAppointment,
+	completeProviderWalkerAppointment
 };

@@ -10,7 +10,9 @@ const {
 	listUpcomingAppointments,
 	cancelAppointment,
 	rescheduleAppointment,
-	recordDiagnosis
+	recordDiagnosis,
+	confirmCitaAsProvider,
+	cancelCitaAsProvider
 } = require('../controllers/ownerAppointments.controller');
 
 router.post('/', auth, authorizeRoles('dueno'), createOwnerAppointment);
@@ -18,6 +20,9 @@ router.post('/', auth, authorizeRoles('dueno'), createOwnerAppointment);
 router.get('/mis-citas', auth, authorizeRoles('dueno'), listMyAppointments);
 
 router.get('/proximas', auth, authorizeRoles('dueno'), listUpcomingAppointments);
+
+router.patch('/:id/proveedor/confirmar', auth, authorizeRoles('proveedor'), confirmCitaAsProvider);
+router.patch('/:id/proveedor/cancelar', auth, authorizeRoles('proveedor'), cancelCitaAsProvider);
 
 router.patch('/:id/cancelar', auth, authorizeRoles('dueno'), cancelAppointment);
 

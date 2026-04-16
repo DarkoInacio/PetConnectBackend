@@ -362,11 +362,102 @@ async function recordDiagnosis(req, res, next) {
 	}
 }
 
+/**
+ * PATCH /api/citas/:id/proveedor/confirmar
+ */
+async function confirmCitaAsProvider(req, res, next) {
+	try {
+		const { id } = req.params;
+		if (!mongoose.isValidObjectId(id)) {
+			return res.status(400).json({ message: 'Id de cita inválido' });
+		}
+
+		const cita = await Cita.findById(id);
+		if (!cita) {
+			return res.status(404).json({ message: 'Cita no encontrada' });
+		}
+		if (proveedorIdString(cita) !== req.user.id) {
+			return res.status(403).json({ message: 'Solo el proveedor de la cita puede confirmarla' });
+		}
+		if (cita.estado !== 'pendiente') {
+			return res.status(400).json({ message: 'Solo se pueden confirmar citas en estado pendiente' });
+		}
+
+		cita.estado = 'confirmada';
+		await cita.save();
+
+		await Appointment.updateMany(
+			{ legacyCitaId: cita._id },
+			{ $set: { status: 'confirmed' } }
+		).catch((e) => console.error('[HU-14] sync confirm Appointment:', e.message));
+
+		const updated = await Cita.findById(cita._id)
+			.populate('proveedor', 'name lastName email providerType')
+			.populate('dueno', 'name lastName email');
+
+		return res.status(200).json({ message: 'Cita confirmada', cita: updated });
+	} catch (err) {
+		next(err);
+	}
+}
+
+/**
+ * PATCH /api/citas/:id/proveedor/cancelar
+ */
+async function cancelCitaAsProvider(req, res, next) {
+	try {
+		const { id } = req.params;
+		const motivo =
+			req.body?.motivo == null || !String(req.body.motivo).trim()
+				? 'Cancelada por el proveedor'
+				: String(req.body.motivo).trim().slice(0, 200);
+
+		if (!mongoose.isValidObjectId(id)) {
+			return res.status(400).json({ message: 'Id de cita inválido' });
+		}
+
+		const cita = await Cita.findById(id);
+		if (!cita) {
+			return res.status(404).json({ message: 'Cita no encontrada' });
+		}
+		if (proveedorIdString(cita) !== req.user.id) {
+			return res.status(403).json({ message: 'Solo el proveedor de la cita puede cancelarla' });
+		}
+		if (!['pendiente', 'confirmada'].includes(cita.estado)) {
+			return res.status(400).json({ message: 'No se puede cancelar esta cita en su estado actual' });
+		}
+
+		cita.estado = 'cancelada';
+		await cita.save();
+
+		await Appointment.updateMany(
+			{ legacyCitaId: cita._id },
+			{
+				$set: {
+					status: 'cancelled_by_provider',
+					cancelledAt: new Date(),
+					cancellationReason: motivo
+				}
+			}
+		).catch((e) => console.error('[HU-14] sync cancel provider Cita:', e.message));
+
+		const updated = await Cita.findById(cita._id)
+			.populate('proveedor', 'name lastName email providerType')
+			.populate('dueno', 'name lastName email');
+
+		return res.status(200).json({ message: 'Cita cancelada', cita: updated });
+	} catch (err) {
+		next(err);
+	}
+}
+
 module.exports = {
 	createOwnerAppointment,
 	listMyAppointments,
 	listUpcomingAppointments,
 	cancelAppointment,
 	rescheduleAppointment,
-	recordDiagnosis
+	recordDiagnosis,
+	confirmCitaAsProvider,
+	cancelCitaAsProvider
 };

@@ -679,6 +679,30 @@ async function updateMyProviderProfile(req, res, next) {
 			}
 		}
 
+		if (body.referenceRate !== undefined) {
+			if (body.referenceRate === null) {
+				$unset['providerProfile.referenceRate'] = '';
+			} else if (typeof body.referenceRate !== 'object') {
+				return res.status(400).json({ message: 'referenceRate debe ser un objeto' });
+			} else {
+				const rr = body.referenceRate;
+				if (rr.amount !== undefined) {
+					const n = Number(rr.amount);
+					if (Number.isNaN(n) || n < 0) {
+						return res.status(400).json({ message: 'referenceRate.amount inválido' });
+					}
+					$set['providerProfile.referenceRate.amount'] = n;
+				}
+				if (rr.currency !== undefined) {
+					$set['providerProfile.referenceRate.currency'] = String(rr.currency || 'CLP').trim();
+				}
+				if (rr.unit !== undefined) {
+					$set['providerProfile.referenceRate.unit'] =
+						rr.unit == null ? '' : String(rr.unit).trim();
+				}
+			}
+		}
+
 		if (body.isPublished === true) {
 			const existingUser = await User.findById(req.user.id).lean();
 			if (
