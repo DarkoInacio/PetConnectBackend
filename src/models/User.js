@@ -39,6 +39,38 @@ const referenceRateSchema = new mongoose.Schema(
 	{ _id: false }
 );
 
+const walkerTariffsSchema = new mongoose.Schema(
+	{
+		walk30min: { type: Number, min: 0 },
+		walk60min: { type: Number, min: 0 },
+		dayCare: { type: Number, min: 0 },
+		overnight: { type: Number, min: 0 },
+		currency: { type: String, default: 'CLP', trim: true }
+	},
+	{ _id: false }
+);
+
+const weeklyAvailabilityRangeSchema = new mongoose.Schema(
+	{
+		start: { type: String, trim: true },
+		end: { type: String, trim: true }
+	},
+	{ _id: false }
+);
+
+const weeklyAvailabilityDaySchema = new mongoose.Schema(
+	{
+		day: {
+			type: String,
+			enum: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'],
+			required: true
+		},
+		enabled: { type: Boolean, default: true },
+		ranges: [weeklyAvailabilityRangeSchema]
+	},
+	{ _id: false }
+);
+
 const providerProfileSchema = new mongoose.Schema(
 	{
 		address: addressSchema,
@@ -49,6 +81,26 @@ const providerProfileSchema = new mongoose.Schema(
 		specialties: [{ type: String, trim: true }],
 		serviceCommunes: [{ type: String, trim: true }],
 		petTypes: [{ type: String, trim: true }],
+		experienceYears: { type: Number, min: 0 },
+		petsAttended: { type: String, trim: true },
+		weeklyAvailability: [weeklyAvailabilityDaySchema],
+		walkerTariffs: walkerTariffsSchema,
+		isPublished: { type: Boolean, default: true },
+		operationalStatus: {
+			type: String,
+			enum: ['abierto', 'temporalmente_cerrado'],
+			default: 'abierto'
+		},
+		ratingAverage: {
+			type: Number,
+			min: 0,
+			max: 5
+		},
+		ratingCount: {
+			type: Number,
+			min: 0,
+			default: 0
+		},
 		socialMedia: socialMediaSchema,
 		referenceRate: referenceRateSchema,
 		gallery: [{ type: String }],

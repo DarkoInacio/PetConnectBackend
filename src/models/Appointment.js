@@ -3,6 +3,7 @@
 const mongoose = require('mongoose');
 
 const APPOINTMENT_STATUSES = [
+	'pending_confirmation',
 	'confirmed',
 	'cancelled_by_owner',
 	'cancelled_by_provider',
@@ -40,6 +41,16 @@ const appointmentSchema = new mongoose.Schema(
 			type: Date,
 			required: true
 		},
+		pet: {
+			name: {
+				type: String,
+				trim: true
+			},
+			species: {
+				type: String,
+				trim: true
+			}
+		},
 		reason: {
 			type: String,
 			trim: true,
@@ -59,7 +70,7 @@ const appointmentSchema = new mongoose.Schema(
 		cancellationReason: {
 			type: String,
 			trim: true,
-			maxlength: 300
+			maxlength: 200
 		}
 	},
 	{
