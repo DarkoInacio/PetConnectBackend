@@ -9,7 +9,7 @@ const {
 	listApprovedProviders,
 	searchProviders,
 	updateMyProviderProfile
-} = require('../controllers/proveedores.controller');
+} = require('../controllers/providers.controller');
 
 router.put('/mi-perfil', auth, authorizeRoles('proveedor'), updateMyProviderProfile);
 
