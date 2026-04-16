@@ -11,6 +11,8 @@ const APPOINTMENT_STATUSES = [
 	'no_show'
 ];
 
+const BOOKING_SOURCES = ['availability_slot', 'legacy_cita', 'walker_request'];
+
 const appointmentSchema = new mongoose.Schema(
 	{
 		ownerId: {
@@ -25,12 +27,26 @@ const appointmentSchema = new mongoose.Schema(
 			required: true,
 			index: true
 		},
+		/** Obligatorio solo si bookingSource === availability_slot */
 		slotId: {
 			type: mongoose.Schema.Types.ObjectId,
 			ref: 'AvailabilitySlot',
-			required: true,
-			unique: true,
+			sparse: true,
+			unique: true
+		},
+		/** Fuente de verdad HU-14: slot, migración desde Cita, o solicitud paseador/cuidador */
+		bookingSource: {
+			type: String,
+			enum: BOOKING_SOURCES,
+			default: 'availability_slot',
 			index: true
+		},
+		/** Enlace 1:1 con Cita legacy cuando bookingSource === legacy_cita */
+		legacyCitaId: {
+			type: mongoose.Schema.Types.ObjectId,
+			ref: 'Cita',
+			sparse: true,
+			unique: true
 		},
 		startAt: {
 			type: Date,
@@ -78,5 +94,17 @@ const appointmentSchema = new mongoose.Schema(
 	}
 );
 
+appointmentSchema.pre('validate', function (next) {
+	const src = this.bookingSource || 'availability_slot';
+	if (src === 'availability_slot' && !this.slotId) {
+		return next(new Error('slotId es obligatorio cuando bookingSource es availability_slot'));
+	}
+	if (src === 'legacy_cita' && !this.legacyCitaId) {
+		return next(new Error('legacyCitaId es obligatorio cuando bookingSource es legacy_cita'));
+	}
+	next();
+});
+
 module.exports = mongoose.model('Appointment', appointmentSchema);
 module.exports.APPOINTMENT_STATUSES = APPOINTMENT_STATUSES;
+module.exports.BOOKING_SOURCES = BOOKING_SOURCES;

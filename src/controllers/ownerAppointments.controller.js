@@ -2,12 +2,28 @@
 
 const mongoose = require('mongoose');
 const Cita = require('../models/Cita');
+const Appointment = require('../models/Appointment');
 const User = require('../models/User');
 const CITA_ESTADOS = Cita.CITA_ESTADOS;
 const {
 	notifyProviderAppointmentCanceled,
 	notifyProviderAppointmentRescheduled
 } = require('../utils/notifyProviderAppointment');
+
+function mapCitaEstadoToAppointmentStatus(estado) {
+	switch (estado) {
+		case 'pendiente':
+			return 'pending_confirmation';
+		case 'confirmada':
+			return 'confirmed';
+		case 'cancelada':
+			return 'cancelled_by_owner';
+		case 'completada':
+			return 'completed';
+		default:
+			return 'pending_confirmation';
+	}
+}
 
 /**
  * POST /api/citas
@@ -52,6 +68,30 @@ async function createOwnerAppointment(req, res, next) {
 			notas: notas != null && String(notas).trim() ? String(notas).trim() : undefined,
 			estado: 'pendiente'
 		});
+
+		try {
+			await Appointment.create({
+				ownerId: req.user.id,
+				providerId: proveedorId,
+				bookingSource: 'legacy_cita',
+				legacyCitaId: cita._id,
+				startAt: fechaCita,
+				endAt: new Date(fechaCita.getTime() + 60 * 60 * 1000),
+				pet: {
+					name: String(mascota.nombre).trim(),
+					species: String(mascota.especie).trim()
+				},
+				reason: String(servicio).trim(),
+				status: mapCitaEstadoToAppointmentStatus('pendiente')
+			});
+		} catch (dupErr) {
+			console.error('[HU-14] Dual-write Cita→Appointment:', dupErr.message);
+		}
+
+		res.set(
+			'X-PetConnect-Booking-Note',
+			'Fuente canónica: colección Appointment. Esta ruta duplica en Appointment (legacy_cita). Preferir POST /api/appointments con slotId.'
+		);
 
 		const populated = await Cita.findById(cita._id)
 			.populate('proveedor', 'name lastName email providerType')
@@ -177,6 +217,17 @@ async function cancelAppointment(req, res, next) {
 		cita.estado = 'cancelada';
 		await cita.save();
 
+		await Appointment.updateMany(
+			{ legacyCitaId: cita._id },
+			{
+				$set: {
+					status: 'cancelled_by_owner',
+					cancelledAt: new Date(),
+					cancellationReason: 'Cancelada vía /api/citas'
+				}
+			}
+		).catch((e) => console.error('[HU-14] sync cancel Appointment:', e.message));
+
 		const prov = cita.proveedor;
 		const provNombre = prov ? `${prov.name || ''} ${prov.lastName || ''}`.trim() || 'Proveedor' : 'Proveedor';
 		notifyProviderAppointmentCanceled({
@@ -236,6 +287,16 @@ async function rescheduleAppointment(req, res, next) {
 		cita.fecha = nuevaFecha;
 		await cita.save();
 
+		await Appointment.updateMany(
+			{ legacyCitaId: cita._id },
+			{
+				$set: {
+					startAt: nuevaFecha,
+					endAt: new Date(nuevaFecha.getTime() + 60 * 60 * 1000)
+				}
+			}
+		).catch((e) => console.error('[HU-14] sync reagendar Appointment:', e.message));
+
 		const prov = cita.proveedor;
 		const provNombre = prov ? `${prov.name || ''} ${prov.lastName || ''}`.trim() || 'Proveedor' : 'Proveedor';
 		notifyProviderAppointmentRescheduled({
@@ -285,6 +346,11 @@ async function recordDiagnosis(req, res, next) {
 		cita.diagnostico = String(diagnostico).trim();
 		cita.estado = 'completada';
 		await cita.save();
+
+		await Appointment.updateMany(
+			{ legacyCitaId: cita._id },
+			{ $set: { status: 'completed' } }
+		).catch((e) => console.error('[HU-14] sync diagnóstico Appointment:', e.message));
 
 		const updated = await Cita.findById(cita._id)
 			.populate('proveedor', 'name lastName email providerType')

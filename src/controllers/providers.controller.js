@@ -4,6 +4,16 @@ const mongoose = require('mongoose');
 const User = require('../models/User');
 const { distanceKm } = require('../utils/haversine');
 const { geocodeAddressNominatim } = require('../utils/geocodeNominatim');
+const {
+	getRatingSummary,
+	getRecentReviews,
+	formatReviewsForPublic
+} = require('../services/providerRating.service');
+const {
+	mergeWalkerProfileForPublish,
+	validatePaseadorCuidadorForPublish
+} = require('../utils/walkerProfileValidation');
+const Appointment = require('../models/Appointment');
 
 const PRIVATE_PROFILE_KEYS = new Set(['rejectionReason', 'reviewedAt', 'reviewedBy']);
 const DEFAULT_MAP_CENTER = {
@@ -11,6 +21,77 @@ const DEFAULT_MAP_CENTER = {
 	lng: -70.6693,
 	label: 'Santiago'
 };
+
+const RESERVED_PUBLIC_SLUGS = new Set([
+	'buscar',
+	'mapa',
+	'mi-perfil',
+	'perfil',
+	'auth',
+	'admin',
+	'profile',
+	'appointments',
+	'citas',
+	'proveedores',
+	'providers',
+	'api'
+]);
+
+const PROVIDER_KINDS = ['veterinaria', 'paseador', 'cuidador'];
+
+function assertValidPublicSlug(slug) {
+	if (typeof slug !== 'string') {
+		throw Object.assign(new Error('publicSlug inválido'), { status: 400 });
+	}
+	const s = slug.trim().toLowerCase();
+	if (s.length < 3 || s.length > 80) {
+		throw Object.assign(new Error('publicSlug debe tener entre 3 y 80 caracteres'), { status: 400 });
+	}
+	if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(s)) {
+		throw Object.assign(
+			new Error('publicSlug solo permite letras minúsculas, números y guiones'),
+			{ status: 400 }
+		);
+	}
+	if (RESERVED_PUBLIC_SLUGS.has(s)) {
+		throw Object.assign(new Error('publicSlug reservado, elige otro'), { status: 400 });
+	}
+	return s;
+}
+
+async function buildPublicProveedorResponse(user) {
+	const id = user._id;
+	const [summary, recent] = await Promise.all([getRatingSummary(id), getRecentReviews(id, 5)]);
+	const slug = user.providerProfile?.publicSlug || null;
+	const profilePath =
+		slug && user.providerType ? `/api/proveedores/perfil/${user.providerType}/${slug}` : null;
+	const seoPath = slug && user.providerType ? `/${user.providerType}/${slug}` : null;
+
+	return {
+		id,
+		name: user.name,
+		lastName: user.lastName,
+		phone: user.phone || null,
+		profileImage: user.profileImage || null,
+		providerType: user.providerType,
+		publicSlug: slug,
+		profilePath,
+		seoPath,
+		perfil: toPublicProviderProfile(user.providerProfile),
+		ratingSummary: summary,
+		reviewsRecent: formatReviewsForPublic(recent)
+	};
+}
+
+function assertProviderVisiblePublic(user) {
+	if (!user || user.role !== 'proveedor' || user.status !== 'aprobado') {
+		return false;
+	}
+	if (user.providerProfile && user.providerProfile.isPublished === false) {
+		return false;
+	}
+	return true;
+}
 
 function toPublicProviderProfile(pp) {
 	if (!pp) return null;
@@ -36,26 +117,49 @@ async function getProviderPublicProfile(req, res, next) {
 		const user = await User.findById(id).select(
 			'name lastName phone profileImage providerType role status providerProfile'
 		);
-		if (!user || user.role !== 'proveedor' || user.status !== 'aprobado') {
+		if (!assertProviderVisiblePublic(user)) {
 			return res.status(404).json({ message: 'Proveedor no encontrado' });
 		}
-		return res.status(200).json({
-			proveedor: {
-				id: user._id,
-				name: user.name,
-				lastName: user.lastName,
-				phone: user.phone || null,
-				profileImage: user.profileImage || null,
-				providerType: user.providerType,
-				perfil: toPublicProviderProfile(user.providerProfile)
-			}
-		});
+		const proveedor = await buildPublicProveedorResponse(user);
+		return res.status(200).json({ proveedor });
 	} catch (err) {
 		next(err);
 	}
 }
 
-const PROVIDER_KINDS = ['veterinaria', 'paseador', 'cuidador'];
+/**
+ * GET /api/proveedores/perfil/:tipo/:slug
+ */
+async function getProviderPublicProfileBySlug(req, res, next) {
+	try {
+		const tipo = String(req.params.tipo || '').trim();
+		const slug = String(req.params.slug || '').trim().toLowerCase();
+		if (!PROVIDER_KINDS.includes(tipo)) {
+			return res.status(400).json({ message: 'tipo debe ser veterinaria, paseador o cuidador' });
+		}
+		if (!slug) {
+			return res.status(400).json({ message: 'slug inválido' });
+		}
+
+		const user = await User.findOne({
+			role: 'proveedor',
+			status: 'aprobado',
+			providerType: tipo,
+			'providerProfile.publicSlug': slug,
+			'providerProfile.isPublished': { $ne: false }
+		}).select('name lastName phone profileImage providerType role status providerProfile');
+
+		if (!user) {
+			return res.status(404).json({ message: 'Proveedor no encontrado' });
+		}
+
+		const proveedor = await buildPublicProveedorResponse(user);
+		return res.status(200).json({ proveedor });
+	} catch (err) {
+		next(err);
+	}
+}
+
 const WEEK_DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 
 function buildProviderFilter(q) {
@@ -408,6 +512,7 @@ function normalizeServices(raw) {
 async function updateMyProviderProfile(req, res, next) {
 	try {
 		const $set = {};
+		const $unset = {};
 		const body = req.body || {};
 
 		const blockedRoot = [
@@ -574,13 +679,57 @@ async function updateMyProviderProfile(req, res, next) {
 			}
 		}
 
-		if (Object.keys($set).length === 0) {
+		if (body.isPublished === true) {
+			const existingUser = await User.findById(req.user.id).lean();
+			if (
+				existingUser &&
+				(existingUser.providerType === 'paseador' || existingUser.providerType === 'cuidador')
+			) {
+				const mergedProfile = mergeWalkerProfileForPublish(existingUser.providerProfile, body);
+				const errMsg = validatePaseadorCuidadorForPublish(existingUser.providerType, mergedProfile);
+				if (errMsg) {
+					return res.status(400).json({ message: errMsg });
+				}
+			}
+		}
+
+		if (body.publicSlug !== undefined) {
+			if (body.publicSlug === null || String(body.publicSlug).trim() === '') {
+				$unset['providerProfile.publicSlug'] = '';
+			} else {
+				let s;
+				try {
+					s = assertValidPublicSlug(String(body.publicSlug));
+				} catch (e) {
+					if (e.status === 400) {
+						return res.status(400).json({ message: e.message });
+					}
+					throw e;
+				}
+				const taken = await User.findOne({
+					'providerProfile.publicSlug': s,
+					_id: { $ne: req.user.id }
+				})
+					.select('_id')
+					.lean();
+				if (taken) {
+					return res.status(409).json({ message: 'publicSlug ya está en uso' });
+				}
+				$set['providerProfile.publicSlug'] = s;
+			}
+		}
+
+		if (Object.keys($set).length === 0 && Object.keys($unset).length === 0) {
 			return res.status(400).json({ message: 'No hay campos para actualizar' });
 		}
 
+		const updateOps = {};
+		if (Object.keys($set).length) updateOps.$set = $set;
+		if (Object.keys($unset).length) updateOps.$unset = $unset;
+
 		const user = await User.findOneAndUpdate(
 			{ _id: req.user.id, role: 'proveedor' },
-			{ $set },
+			updateOps,
 			{ new: true, runValidators: true, context: 'query' }
 		).select('-password -passwordResetToken -passwordResetExpires');
 
@@ -590,6 +739,9 @@ async function updateMyProviderProfile(req, res, next) {
 
 		return res.status(200).json({ message: 'Perfil actualizado', user });
 	} catch (err) {
+		if (err.code === 11000) {
+			return res.status(409).json({ message: 'publicSlug ya está en uso' });
+		}
 		if (err.status === 400) {
 			return res.status(400).json({ message: err.message });
 		}
@@ -597,11 +749,74 @@ async function updateMyProviderProfile(req, res, next) {
 	}
 }
 
+/**
+ * POST /api/proveedores/solicitar-servicio — HU-10 flujo base (dueño → paseador/cuidador)
+ */
+async function requestWalkerService(req, res, next) {
+	try {
+		const { providerId, pet, message, preferredStart, preferredEnd } = req.body || {};
+
+		if (!providerId || !mongoose.isValidObjectId(providerId)) {
+			return res.status(400).json({ message: 'providerId es obligatorio y debe ser un id válido' });
+		}
+
+		const name = pet?.name != null ? String(pet.name).trim() : '';
+		const species = pet?.species != null ? String(pet.species).trim() : '';
+		if (!name || !species) {
+			return res.status(400).json({ message: 'pet.name y pet.species son obligatorios' });
+		}
+
+		const prov = await User.findById(providerId).select(
+			'role status providerType providerProfile.isPublished'
+		);
+		if (!prov || prov.role !== 'proveedor' || prov.status !== 'aprobado') {
+			return res.status(404).json({ message: 'Proveedor no encontrado' });
+		}
+		if (prov.providerType !== 'paseador' && prov.providerType !== 'cuidador') {
+			return res.status(400).json({ message: 'Solicitar servicio solo aplica a paseador o cuidador' });
+		}
+		if (prov.providerProfile && prov.providerProfile.isPublished === false) {
+			return res.status(400).json({ message: 'El proveedor no tiene el perfil publicado' });
+		}
+
+		let startAt = preferredStart ? new Date(preferredStart) : new Date(Date.now() + 24 * 60 * 60 * 1000);
+		let endAt = preferredEnd ? new Date(preferredEnd) : new Date(startAt.getTime() + 2 * 60 * 60 * 1000);
+		if (Number.isNaN(startAt.getTime()) || Number.isNaN(endAt.getTime())) {
+			return res.status(400).json({ message: 'preferredStart / preferredEnd inválidos' });
+		}
+		if (endAt <= startAt) {
+			return res.status(400).json({ message: 'preferredEnd debe ser posterior a preferredStart' });
+		}
+
+		const msg = message != null ? String(message).trim().slice(0, 500) : '';
+
+		const appointment = await Appointment.create({
+			ownerId: req.user.id,
+			providerId,
+			bookingSource: 'walker_request',
+			startAt,
+			endAt,
+			pet: { name, species },
+			reason: msg || 'Solicitud de servicio',
+			status: 'pending_confirmation'
+		});
+
+		return res.status(201).json({
+			message: 'Solicitud registrada',
+			appointment
+		});
+	} catch (err) {
+		next(err);
+	}
+}
+
 module.exports = {
 	getProviderPublicProfile,
+	getProviderPublicProfileBySlug,
 	listApprovedProviders,
 	searchProviders,
 	getProvidersMapData,
 	updateMyProviderProfile,
+	requestWalkerService,
 	toPublicProviderProfile
 };

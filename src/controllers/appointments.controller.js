@@ -124,6 +124,7 @@ async function createAppointment(req, res, next) {
 			const appointment = await Appointment.create({
 				ownerId: req.user.id,
 				providerId,
+				bookingSource: 'availability_slot',
 				slotId,
 				startAt: consumedSlot.startAt,
 				endAt: consumedSlot.endAt,
@@ -204,21 +205,24 @@ async function cancelMyAppointment(req, res, next) {
 		appointment.cancellationReason = cancellationReason;
 		await appointment.save();
 
-		await AvailabilitySlot.updateOne(
-			{
-				providerId: appointment.providerId._id || appointment.providerId,
-				startAt: appointment.startAt
-			},
-			{
-				$setOnInsert: {
+		const src = appointment.bookingSource || 'availability_slot';
+		if (src === 'availability_slot' && appointment.slotId) {
+			await AvailabilitySlot.updateOne(
+				{
 					providerId: appointment.providerId._id || appointment.providerId,
-					startAt: appointment.startAt,
-					endAt: appointment.endAt,
-					status: 'available'
-				}
-			},
-			{ upsert: true }
-		);
+					startAt: appointment.startAt
+				},
+				{
+					$setOnInsert: {
+						providerId: appointment.providerId._id || appointment.providerId,
+						startAt: appointment.startAt,
+						endAt: appointment.endAt,
+						status: 'available'
+					}
+				},
+				{ upsert: true }
+			);
+		}
 
 		notifyProveedorAppointmentCancelada({
 			proveedorEmail: appointment.providerId?.email,

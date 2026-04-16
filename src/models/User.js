@@ -104,6 +104,12 @@ const providerProfileSchema = new mongoose.Schema(
 		socialMedia: socialMediaSchema,
 		referenceRate: referenceRateSchema,
 		gallery: [{ type: String }],
+		publicSlug: {
+			type: String,
+			trim: true,
+			lowercase: true,
+			default: undefined
+		},
 		rejectionReason: { type: String },
 		reviewedAt: { type: Date },
 		reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
@@ -189,6 +195,8 @@ userSchema.pre('save', async function (next) {
 userSchema.methods.comparePassword = async function (candidatePassword) {
 	return bcrypt.compare(candidatePassword, this.password);
 };
+
+userSchema.index({ 'providerProfile.publicSlug': 1 }, { unique: true, sparse: true });
 
 module.exports = mongoose.model('User', userSchema);
 module.exports.USER_ROLES = USER_ROLES;
