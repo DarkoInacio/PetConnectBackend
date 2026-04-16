@@ -34,7 +34,7 @@ async function getProviderPublicProfile(req, res, next) {
 			return res.status(400).json({ message: 'Id de proveedor inválido' });
 		}
 		const user = await User.findById(id).select(
-			'name lastName profileImage providerType role status providerProfile'
+			'name lastName phone profileImage providerType role status providerProfile'
 		);
 		if (!user || user.role !== 'proveedor' || user.status !== 'aprobado') {
 			return res.status(404).json({ message: 'Proveedor no encontrado' });
@@ -44,6 +44,7 @@ async function getProviderPublicProfile(req, res, next) {
 				id: user._id,
 				name: user.name,
 				lastName: user.lastName,
+				phone: user.phone || null,
 				profileImage: user.profileImage || null,
 				providerType: user.providerType,
 				perfil: toPublicProviderProfile(user.providerProfile)
