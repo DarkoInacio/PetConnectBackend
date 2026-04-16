@@ -8,12 +8,14 @@ const {
 	getProviderPublicProfile,
 	listApprovedProviders,
 	searchProviders,
+	getProvidersMapData,
 	updateMyProviderProfile
 } = require('../controllers/proveedores.controller');
 
 router.put('/mi-perfil', auth, authorizeRoles('proveedor'), updateMyProviderProfile);
 
 router.get('/buscar', searchProviders);
+router.get('/mapa', getProvidersMapData);
 
 router.get('/', listApprovedProviders);
 

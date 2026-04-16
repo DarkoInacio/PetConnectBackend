@@ -49,6 +49,21 @@ const providerProfileSchema = new mongoose.Schema(
 		specialties: [{ type: String, trim: true }],
 		serviceCommunes: [{ type: String, trim: true }],
 		petTypes: [{ type: String, trim: true }],
+		operationalStatus: {
+			type: String,
+			enum: ['abierto', 'temporalmente_cerrado'],
+			default: 'abierto'
+		},
+		ratingAverage: {
+			type: Number,
+			min: 0,
+			max: 5
+		},
+		ratingCount: {
+			type: Number,
+			min: 0,
+			default: 0
+		},
 		socialMedia: socialMediaSchema,
 		referenceRate: referenceRateSchema,
 		gallery: [{ type: String }],
