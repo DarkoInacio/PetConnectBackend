@@ -56,9 +56,14 @@ async function getProviderPublicProfile(req, res, next) {
 }
 
 const PROVIDER_KINDS = ['veterinaria', 'paseador', 'cuidador'];
+const WEEK_DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 
 function buildProviderFilter(q) {
-	const filter = { role: 'proveedor', status: 'aprobado' };
+	const filter = {
+		role: 'proveedor',
+		status: 'aprobado',
+		'providerProfile.isPublished': { $ne: false }
+	};
 
 	if (q.tipo !== undefined && String(q.tipo).trim()) {
 		const tipo = String(q.tipo).trim();
@@ -76,7 +81,11 @@ function buildProviderFilter(q) {
 	if (q.ciudad !== undefined && String(q.ciudad).trim()) {
 		const esc = String(q.ciudad).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 		const re = new RegExp(esc, 'i');
-		filter.$or = [{ 'providerProfile.address.city': re }, { 'providerProfile.address.commune': re }];
+		filter.$or = [
+			{ 'providerProfile.address.city': re },
+			{ 'providerProfile.address.commune': re },
+			{ 'providerProfile.serviceCommunes': re }
+		];
 	}
 
 	const amountCond = {};
@@ -124,6 +133,78 @@ function parseGeoQuery(q) {
 	}
 
 	return { hasGeo: true, lat0, lng0, radioKm };
+}
+
+function normalizeStringArray(raw, fieldName) {
+	if (raw === undefined) return undefined;
+	if (!Array.isArray(raw)) {
+		throw Object.assign(new Error(`${fieldName} debe ser un arreglo de strings`), { status: 400 });
+	}
+	return raw.map((v) => String(v).trim()).filter(Boolean);
+}
+
+function parseWalkerTariffs(raw) {
+	if (raw === undefined) return undefined;
+	if (raw === null || typeof raw !== 'object') {
+		throw Object.assign(new Error('walkerTariffs debe ser un objeto'), { status: 400 });
+	}
+	const out = {};
+	for (const k of ['walk30min', 'walk60min', 'dayCare', 'overnight']) {
+		if (raw[k] !== undefined) {
+			const n = Number(raw[k]);
+			if (Number.isNaN(n) || n < 0) {
+				throw Object.assign(new Error(`walkerTariffs.${k} debe ser un número mayor o igual a 0`), {
+					status: 400
+				});
+			}
+			out[k] = n;
+		}
+	}
+	if (raw.currency !== undefined) {
+		out.currency = String(raw.currency).trim() || 'CLP';
+	}
+	return out;
+}
+
+function parseWeeklyAvailability(raw) {
+	if (raw === undefined) return undefined;
+	if (!Array.isArray(raw)) {
+		throw Object.assign(new Error('weeklyAvailability debe ser un arreglo'), { status: 400 });
+	}
+	return raw.map((d) => {
+		if (d === null || typeof d !== 'object') {
+			throw Object.assign(new Error('Cada bloque de weeklyAvailability debe ser un objeto'), {
+				status: 400
+			});
+		}
+		const day = String(d.day || '').trim().toLowerCase();
+		if (!WEEK_DAYS.includes(day)) {
+			throw Object.assign(new Error(`weeklyAvailability.day inválido: ${day}`), { status: 400 });
+		}
+		const enabled = d.enabled === undefined ? true : Boolean(d.enabled);
+		let ranges = [];
+		if (d.ranges !== undefined) {
+			if (!Array.isArray(d.ranges)) {
+				throw Object.assign(new Error('weeklyAvailability.ranges debe ser un arreglo'), { status: 400 });
+			}
+			ranges = d.ranges.map((r) => {
+				if (r === null || typeof r !== 'object') {
+					throw Object.assign(new Error('Cada rango de weeklyAvailability debe ser un objeto'), {
+						status: 400
+					});
+				}
+				const start = String(r.start || '').trim();
+				const end = String(r.end || '').trim();
+				if (!start || !end) {
+					throw Object.assign(new Error('weeklyAvailability.ranges requiere start y end'), {
+						status: 400
+					});
+				}
+				return { start, end };
+			});
+		}
+		return { day, enabled, ranges };
+	});
 }
 
 /**
@@ -361,6 +442,38 @@ async function updateMyProviderProfile(req, res, next) {
 		}
 		if (body.services !== undefined) {
 			$set['providerProfile.services'] = normalizeServices(body.services);
+		}
+		if (body.serviceCommunes !== undefined) {
+			$set['providerProfile.serviceCommunes'] = normalizeStringArray(
+				body.serviceCommunes,
+				'serviceCommunes'
+			);
+		}
+		if (body.petTypes !== undefined) {
+			$set['providerProfile.petTypes'] = normalizeStringArray(body.petTypes, 'petTypes');
+		}
+		if (body.experienceYears !== undefined) {
+			const v = Number(body.experienceYears);
+			if (Number.isNaN(v) || v < 0) {
+				return res.status(400).json({ message: 'experienceYears debe ser un número mayor o igual a 0' });
+			}
+			$set['providerProfile.experienceYears'] = v;
+		}
+		if (body.petsAttended !== undefined) {
+			$set['providerProfile.petsAttended'] =
+				body.petsAttended == null ? '' : String(body.petsAttended).trim();
+		}
+		if (body.weeklyAvailability !== undefined) {
+			$set['providerProfile.weeklyAvailability'] = parseWeeklyAvailability(body.weeklyAvailability);
+		}
+		if (body.walkerTariffs !== undefined) {
+			const tariffs = parseWalkerTariffs(body.walkerTariffs);
+			for (const [k, v] of Object.entries(tariffs)) {
+				$set[`providerProfile.walkerTariffs.${k}`] = v;
+			}
+		}
+		if (body.isPublished !== undefined) {
+			$set['providerProfile.isPublished'] = Boolean(body.isPublished);
 		}
 		if (body.operationalStatus !== undefined) {
 			const operationalStatus = String(body.operationalStatus).trim();
