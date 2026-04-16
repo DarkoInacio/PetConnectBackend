@@ -1,0 +1,84 @@
+{
+	"info": {
+		"name": "PetConnect — HU-09 / HU-10 / HU-14",
+		"description": "Perfil slug, reseñas, solicitar servicio, bookings unificados. Variables: baseUrl, tokenDueno, tokenProveedor, providerId, tipoSlug, publicSlug",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"variable": [
+		{ "key": "baseUrl", "value": "http://localhost:3000" },
+		{ "key": "tokenDueno", "value": "" },
+		{ "key": "tokenProveedor", "value": "" },
+		{ "key": "providerId", "value": "" },
+		{ "key": "tipoSlug", "value": "veterinaria" },
+		{ "key": "publicSlug", "value": "mi-clinica-demo" }
+	],
+	"item": [
+		{
+			"name": "Perfil público por slug",
+			"request": {
+				"method": "GET",
+				"url": "{{baseUrl}}/api/proveedores/perfil/{{tipoSlug}}/{{publicSlug}}"
+			}
+		},
+		{
+			"name": "Listar reseñas",
+			"request": {
+				"method": "GET",
+				"url": "{{baseUrl}}/api/proveedores/{{providerId}}/reviews?pagina=1&limite=10"
+			}
+		},
+		{
+			"name": "Crear reseña (dueño)",
+			"request": {
+				"method": "POST",
+				"header": [
+					{ "key": "Content-Type", "value": "application/json" },
+					{ "key": "Authorization", "value": "Bearer {{tokenDueno}}" }
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"rating\": 5,\n  \"comment\": \"Muy buena atención\"\n}"
+				},
+				"url": "{{baseUrl}}/api/proveedores/{{providerId}}/reviews"
+			}
+		},
+		{
+			"name": "Proveedor — publicSlug",
+			"request": {
+				"method": "PUT",
+				"header": [
+					{ "key": "Content-Type", "value": "application/json" },
+					{ "key": "Authorization", "value": "Bearer {{tokenProveedor}}" }
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"publicSlug\": \"{{publicSlug}}\"\n}"
+				},
+				"url": "{{baseUrl}}/api/proveedores/mi-perfil"
+			}
+		},
+		{
+			"name": "Solicitar servicio (paseador/cuidador)",
+			"request": {
+				"method": "POST",
+				"header": [
+					{ "key": "Content-Type", "value": "application/json" },
+					{ "key": "Authorization", "value": "Bearer {{tokenDueno}}" }
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"providerId\": \"{{providerId}}\",\n  \"pet\": { \"name\": \"Luna\", \"species\": \"perro\" },\n  \"message\": \"Necesito paseo\",\n  \"preferredStart\": \"2026-05-01T10:00:00.000Z\",\n  \"preferredEnd\": \"2026-05-01T12:00:00.000Z\"\n}"
+				},
+				"url": "{{baseUrl}}/api/proveedores/solicitar-servicio"
+			}
+		},
+		{
+			"name": "Reservas unificadas (dueño)",
+			"request": {
+				"method": "GET",
+				"header": [{ "key": "Authorization", "value": "Bearer {{tokenDueno}}" }],
+				"url": "{{baseUrl}}/api/bookings/mine"
+			}
+		}
+	]
+}
