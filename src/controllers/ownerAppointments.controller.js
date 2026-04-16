@@ -5,14 +5,14 @@ const Cita = require('../models/Cita');
 const User = require('../models/User');
 const CITA_ESTADOS = Cita.CITA_ESTADOS;
 const {
-	notifyProveedorCitaCancelada,
-	notifyProveedorCitaReagendada
-} = require('../utils/notifyCitaProveedor');
+	notifyProviderAppointmentCanceled,
+	notifyProviderAppointmentRescheduled
+} = require('../utils/notifyProviderAppointment');
 
 /**
  * POST /api/citas
  */
-async function createCita(req, res, next) {
+async function createOwnerAppointment(req, res, next) {
 	try {
 		const { proveedorId, mascota, servicio, fecha, notas } = req.body || {};
 
@@ -66,7 +66,7 @@ async function createCita(req, res, next) {
 /**
  * GET /api/citas/mis-citas
  */
-async function getMisCitas(req, res, next) {
+async function listMyAppointments(req, res, next) {
 	try {
 		const q = req.query;
 		const filter = { dueno: req.user.id };
@@ -116,7 +116,7 @@ async function getMisCitas(req, res, next) {
 /**
  * GET /api/citas/proximas
  */
-async function getProximasCitas(req, res, next) {
+async function listUpcomingAppointments(req, res, next) {
 	try {
 		const start = new Date();
 		start.setHours(0, 0, 0, 0);
@@ -151,7 +151,7 @@ function proveedorIdString(citaDoc) {
 /**
  * PATCH /api/citas/:id/cancelar
  */
-async function cancelarCita(req, res, next) {
+async function cancelAppointment(req, res, next) {
 	try {
 		const { id } = req.params;
 		if (!mongoose.isValidObjectId(id)) {
@@ -179,12 +179,12 @@ async function cancelarCita(req, res, next) {
 
 		const prov = cita.proveedor;
 		const provNombre = prov ? `${prov.name || ''} ${prov.lastName || ''}`.trim() || 'Proveedor' : 'Proveedor';
-		notifyProveedorCitaCancelada({
-			proveedorEmail: prov?.email,
-			proveedorNombre: provNombre,
-			duenoDoc: cita.dueno,
+		notifyProviderAppointmentCanceled({
+			providerEmail: prov?.email,
+			providerName: provNombre,
+			ownerDoc: cita.dueno,
 			cita
-		}).catch((err) => console.error('notifyProveedorCitaCancelada:', err.message));
+		}).catch((err) => console.error('notifyProviderAppointmentCanceled:', err.message));
 
 		const updated = await Cita.findById(cita._id)
 			.populate('proveedor', 'name lastName email providerType')
@@ -199,7 +199,7 @@ async function cancelarCita(req, res, next) {
 /**
  * PATCH /api/citas/:id/reagendar
  */
-async function reagendarCita(req, res, next) {
+async function rescheduleAppointment(req, res, next) {
 	try {
 		const { id } = req.params;
 		const { fecha } = req.body || {};
@@ -238,13 +238,13 @@ async function reagendarCita(req, res, next) {
 
 		const prov = cita.proveedor;
 		const provNombre = prov ? `${prov.name || ''} ${prov.lastName || ''}`.trim() || 'Proveedor' : 'Proveedor';
-		notifyProveedorCitaReagendada({
-			proveedorEmail: prov?.email,
-			proveedorNombre: provNombre,
-			duenoDoc: cita.dueno,
+		notifyProviderAppointmentRescheduled({
+			providerEmail: prov?.email,
+			providerName: provNombre,
+			ownerDoc: cita.dueno,
 			cita,
 			fechaAnterior
-		}).catch((err) => console.error('notifyProveedorCitaReagendada:', err.message));
+		}).catch((err) => console.error('notifyProviderAppointmentRescheduled:', err.message));
 
 		const updated = await Cita.findById(cita._id)
 			.populate('proveedor', 'name lastName email providerType')
@@ -259,7 +259,7 @@ async function reagendarCita(req, res, next) {
 /**
  * PATCH /api/citas/:id/diagnostico
  */
-async function registrarDiagnostico(req, res, next) {
+async function recordDiagnosis(req, res, next) {
 	try {
 		const { id } = req.params;
 		const { diagnostico } = req.body || {};
@@ -297,10 +297,10 @@ async function registrarDiagnostico(req, res, next) {
 }
 
 module.exports = {
-	createCita,
-	getMisCitas,
-	getProximasCitas,
-	cancelarCita,
-	reagendarCita,
-	registrarDiagnostico
+	createOwnerAppointment,
+	listMyAppointments,
+	listUpcomingAppointments,
+	cancelAppointment,
+	rescheduleAppointment,
+	recordDiagnosis
 };
