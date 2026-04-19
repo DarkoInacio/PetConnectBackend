@@ -57,6 +57,12 @@ const appointmentSchema = new mongoose.Schema(
 			type: Date,
 			required: true
 		},
+		petId: {
+			type: mongoose.Schema.Types.ObjectId,
+			ref: 'Pet',
+			sparse: true,
+			index: true
+		},
 		pet: {
 			name: {
 				type: String,
