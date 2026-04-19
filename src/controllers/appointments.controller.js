@@ -5,6 +5,7 @@ const Appointment = require('../models/Appointment');
 const AvailabilitySlot = require('../models/AvailabilitySlot');
 const Cita = require('../models/Cita');
 const User = require('../models/User');
+const Pet = require('../models/Pet');
 const { notifyProveedorAppointmentCancelada } = require('../utils/notifyAppointmentProveedor');
 
 const MIN_HOURS_BEFORE_CANCEL = 2;
@@ -84,12 +85,16 @@ async function listAvailableSlotsByProvider(req, res, next) {
 
 async function createAppointment(req, res, next) {
 	try {
-		const { providerId, slotId, reason, pet, status } = req.body;
-		if (!providerId || !slotId) {
-			return res.status(400).json({ message: 'Campos obligatorios: providerId, slotId' });
+		const { providerId, slotId, reason, pet, status, petId } = req.body;
+		if (!providerId || !slotId || !petId) {
+			return res.status(400).json({ message: 'Campos obligatorios: providerId, slotId, petId' });
 		}
-		if (!mongoose.Types.ObjectId.isValid(providerId) || !mongoose.Types.ObjectId.isValid(slotId)) {
-			return res.status(400).json({ message: 'providerId o slotId invalido' });
+		if (
+			!mongoose.Types.ObjectId.isValid(providerId) ||
+			!mongoose.Types.ObjectId.isValid(slotId) ||
+			!mongoose.Types.ObjectId.isValid(petId)
+		) {
+			return res.status(400).json({ message: 'providerId, slotId o petId invalido' });
 		}
 
 		const provider = await User.findById(providerId).select('_id role status');
@@ -98,6 +103,14 @@ async function createAppointment(req, res, next) {
 		}
 		if (provider.status !== 'aprobado') {
 			return res.status(400).json({ message: 'El proveedor no esta disponible para citas' });
+		}
+
+		const petDoc = await Pet.findOne({ _id: petId, ownerId: req.user.id }).lean();
+		if (!petDoc) {
+			return res.status(400).json({ message: 'Mascota no encontrada o no pertenece al dueño' });
+		}
+		if (petDoc.status !== 'active') {
+			return res.status(400).json({ message: 'Solo se pueden agendar mascotas activas' });
 		}
 
 		const parsedPet = parsePet(pet);
@@ -122,14 +135,23 @@ async function createAppointment(req, res, next) {
 		}
 
 		try {
+			const embeddedPet =
+				parsedPet?.value ||
+				(petDoc
+					? {
+							name: petDoc.name,
+							species: petDoc.species
+						}
+					: undefined);
 			const appointment = await Appointment.create({
 				ownerId: req.user.id,
 				providerId,
 				bookingSource: 'availability_slot',
 				slotId,
+				petId,
 				startAt: consumedSlot.startAt,
 				endAt: consumedSlot.endAt,
-				pet: parsedPet?.value,
+				pet: embeddedPet,
 				reason: reason || undefined,
 				status: parsedStatus.value
 			});

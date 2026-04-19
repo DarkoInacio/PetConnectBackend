@@ -12,5 +12,7 @@ router.use('/admin/jobs', require('./adminJobs.routes'));
 router.use('/admin', require('./admin.routes'));
 router.use('/proveedores', require('./providers.routes'));
 router.use('/citas', require('./ownerAppointments.routes'));
+router.use('/pets', require('./pets.routes'));
+router.use('/vet', require('./vetClinical.routes'));
 
 module.exports = router;
