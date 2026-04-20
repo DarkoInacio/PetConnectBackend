@@ -4,6 +4,7 @@
 require('dotenv').config();
 
 const http = require('http');
+const { logScopeIfSpa } = require('./config/apiScope');
 const app = require('./app');
 const { connectMongo } = require('./config/db');
 const { startOwnerAppointmentsCronJobs } = require('./jobs/ownerAppointmentsCron');
@@ -20,6 +21,7 @@ async function startServer() {
 	// Iniciar servidor HTTP
 	const server = http.createServer(app);
 	server.listen(PORT, () => {
+		logScopeIfSpa();
 		console.log(`Servidor escuchando en puerto ${PORT}`);
 	});
 
