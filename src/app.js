@@ -12,13 +12,37 @@ const errorHandler = require('./middlewares/errorHandler');
 
 const app = express();
 
+// CORS: CLIENT_URL puede listar varios orígenes separados por coma. En desarrollo se añaden
+// 5173 y 5174 (Vite usa 5174 si 5173 está ocupado) aunque .env solo tenga un puerto.
+function buildCorsOrigin() {
+	const fromEnv = process.env.CLIENT_URL
+		? String(process.env.CLIENT_URL)
+				.split(/[,;]/)
+				.map((s) => s.trim())
+				.filter(Boolean)
+		: [];
+	if (process.env.NODE_ENV === 'production') {
+		if (fromEnv.length === 0) {
+			return true;
+		}
+		return fromEnv.length === 1 ? fromEnv[0] : fromEnv;
+	}
+	const devVite = [
+		'http://localhost:5173',
+		'http://localhost:5174',
+		'http://127.0.0.1:5173',
+		'http://127.0.0.1:5174'
+	];
+	return Array.from(new Set([...devVite, ...fromEnv]));
+}
+
 // Seguridad básica
 app.use(helmet());
 
 // CORS
 app.use(
 	cors({
-		origin: process.env.CLIENT_URL || '*',
+		origin: buildCorsOrigin(),
 		methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
 		credentials: true
 	})

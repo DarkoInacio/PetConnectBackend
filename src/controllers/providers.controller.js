@@ -14,6 +14,7 @@ const {
 	validatePaseadorCuidadorForPublish
 } = require('../utils/walkerProfileValidation');
 const Appointment = require('../models/Appointment');
+const { parseHHMM } = require('../utils/vetAgendaSlots');
 
 const PRIVATE_PROFILE_KEYS = new Set(['rejectionReason', 'reviewedAt', 'reviewedBy']);
 const DEFAULT_MAP_CENTER = {
@@ -588,6 +589,36 @@ async function updateMyProviderProfile(req, res, next) {
 					.json({ message: 'operationalStatus debe ser abierto o temporalmente_cerrado' });
 			}
 			$set['providerProfile.operationalStatus'] = operationalStatus;
+		}
+		if (body.agendaSlotStart !== undefined || body.agendaSlotEnd !== undefined) {
+			const who = await User.findById(req.user.id).select('providerType').lean();
+			if (!who || who.providerType !== 'veterinaria') {
+				return res.status(400).json({ message: 'agendaSlotStart/End solo aplican a clínicas veterinarias' });
+			}
+			const s = String(body.agendaSlotStart != null ? body.agendaSlotStart : '').trim();
+			const e = String(body.agendaSlotEnd != null ? body.agendaSlotEnd : '').trim();
+			if (!s || !e) {
+				return res
+					.status(400)
+					.json({ message: 'Indica inicio y fin de agenda (HH:MM) o deja de enviar esos campos' });
+			}
+			const sm = parseHHMM(s);
+			const em = parseHHMM(e);
+			if (sm == null || em == null) {
+				return res
+					.status(400)
+					.json({ message: 'agendaSlotStart y agendaSlotEnd deben ser HH:MM (p. ej. 10:00, 12:00)' });
+			}
+			if (em <= sm) {
+				return res.status(400).json({ message: 'agendaSlotEnd debe ser mayor que agendaSlotStart' });
+			}
+			if (sm % 30 !== 0 || em % 30 !== 0) {
+				return res
+					.status(400)
+					.json({ message: 'Usa solo minutos :00 o :30 (bloques de 30 minutos)' });
+			}
+			$set['providerProfile.agendaSlotStart'] = s;
+			$set['providerProfile.agendaSlotEnd'] = e;
 		}
 
 		if (body.address !== undefined) {
