@@ -103,7 +103,7 @@ async function buildPublicProveedorResponse(user) {
 	const profilePath =
 		slug && user.providerType ? `/api/proveedores/perfil/${user.providerType}/${slug}` : null;
 	const seoPath = slug && user.providerType ? `/${user.providerType}/${slug}` : null;
-
+	const establishmentName = `${user.name || ''} ${user.lastName || ''}`.trim();
 	return {
 		id,
 		name: user.name,
@@ -117,7 +117,7 @@ async function buildPublicProveedorResponse(user) {
 		perfil: toPublicProviderProfile(user.providerProfile),
 		...(clinicServiceDocs.length > 0 ? { clinicServices: clinicServiceDocs } : {}),
 		ratingSummary: summary,
-		reviewsRecent: formatReviewsForPublic(recent)
+		reviewsRecent: formatReviewsForPublic(recent, { establishmentName })
 	};
 }
 

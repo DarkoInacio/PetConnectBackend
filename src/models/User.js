@@ -191,7 +191,12 @@ const userSchema = new mongoose.Schema(
 			}
 		},
 		passwordResetToken: String,
-		passwordResetExpires: Date
+		passwordResetExpires: Date,
+		/** Solo dueños: bloqueo de nuevas reseñas por moderación */
+		reviewWriteSuspended: {
+			type: Boolean,
+			default: false
+		}
 	},
 	{
 		timestamps: true

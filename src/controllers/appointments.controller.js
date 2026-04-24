@@ -498,6 +498,35 @@ async function completeProviderWalkerAppointment(req, res, next) {
 	}
 }
 
+/**
+ * Marcar cita (veterinaria / servicio con slot o legacy) como completada para habilitar reseñas.
+ * Distinto de complete-walker (solo walker_request).
+ */
+async function completeProviderVisit(req, res, next) {
+	try {
+		const id = req.params.id;
+		if (!mongoose.Types.ObjectId.isValid(id)) {
+			return res.status(400).json({ message: 'Id invalido' });
+		}
+		const appointment = await Appointment.findOne({ _id: id, providerId: req.user.id });
+		if (!appointment) {
+			return res.status(404).json({ message: 'Reserva no encontrada' });
+		}
+		if (appointment.bookingSource === 'walker_request') {
+			return res.status(400).json({ message: 'Usar PATCH .../provider/complete-walker para paseos/cuidado' });
+		}
+		if (!['pending_confirmation', 'confirmed'].includes(appointment.status)) {
+			return res.status(400).json({ message: 'Solo citas confirmadas o pendientes pueden completarse' });
+		}
+		appointment.status = 'completed';
+		await appointment.save();
+		const fresh = await Appointment.findById(appointment._id).lean();
+		return res.status(200).json({ message: 'Cita completada', appointment: fresh });
+	} catch (error) {
+		next(error);
+	}
+}
+
 module.exports = {
 	listAvailableSlotsByProvider,
 	createAppointment,
@@ -505,5 +534,6 @@ module.exports = {
 	cancelMyAppointment,
 	confirmProviderAppointment,
 	cancelProviderAppointment,
-	completeProviderWalkerAppointment
+	completeProviderWalkerAppointment,
+	completeProviderVisit
 };
