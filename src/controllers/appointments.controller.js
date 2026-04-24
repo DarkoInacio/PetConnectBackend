@@ -9,6 +9,9 @@ const User = require('../models/User');
 const Pet = require('../models/Pet');
 const { notifyProveedorAppointmentCancelada } = require('../utils/notifyAppointmentProveedor');
 const { getAgendaZone } = require('../utils/vetAgendaSlots');
+const ClinicService = require('../models/ClinicService');
+const { ensureDefaultClinicService } = require('../utils/clinicService.util');
+const { runVetAgendaGenerateForProvider } = require('../services/vetAgendaGenerateCore.service');
 
 const MIN_HOURS_BEFORE_CANCEL = 2;
 const CANCELLABLE_STATUSES = ['pending_confirmation', 'confirmed'];
@@ -47,14 +50,15 @@ function resolveInitialAppointmentStatus(rawStatus) {
 async function listAvailableSlotsByProvider(req, res, next) {
 	try {
 		const { providerId } = req.params;
-		const { date } = req.query;
+		const { date, clinicServiceId: clinicServiceIdQuery } = req.query;
 
 		if (!mongoose.Types.ObjectId.isValid(providerId)) {
 			return res.status(400).json({ message: 'providerId invalido' });
 		}
 
-		const provider = await User.findById(providerId).select('_id role status');
-		if (!provider || provider.role !== 'proveedor') {
+		const provider = await User.findById(providerId).select('_id role roles status providerType');
+		const provRoles = provider && provider.roles && provider.roles.length > 0 ? provider.roles : [provider?.role];
+		if (!provider || !provRoles.includes('proveedor')) {
 			return res.status(404).json({ message: 'Proveedor no encontrado' });
 		}
 		if (provider.status !== 'aprobado') {
@@ -66,6 +70,32 @@ async function listAvailableSlotsByProvider(req, res, next) {
 			status: 'available',
 			startAt: { $gte: new Date() }
 		};
+
+		if (provider.providerType === 'veterinaria') {
+			let services = await ClinicService.find({ providerId, active: true }).lean();
+			if (services.length === 0) {
+				const d = await ensureDefaultClinicService(providerId);
+				services = [d.toObject ? d.toObject() : d];
+			}
+			const rawCsid =
+				clinicServiceIdQuery != null && String(clinicServiceIdQuery).trim() !== ''
+					? String(clinicServiceIdQuery).trim()
+					: null;
+			let resolvedServiceId = rawCsid;
+			if (services.length > 1) {
+				if (!resolvedServiceId || !mongoose.Types.ObjectId.isValid(resolvedServiceId)) {
+					return res.status(400).json({
+						message: 'Indica qué línea de atención (clinicServiceId) para listar horarios de esta clínica'
+					});
+				}
+				if (!services.some((s) => String(s._id) === String(resolvedServiceId))) {
+					return res.status(400).json({ message: 'clinicServiceId no pertenece a este proveedor' });
+				}
+			} else {
+				resolvedServiceId = String(services[0]._id);
+			}
+			query.clinicServiceId = resolvedServiceId;
+		}
 
 		if (date) {
 			const dateRe = /^\d{4}-\d{2}-\d{2}$/;
@@ -82,10 +112,35 @@ async function listAvailableSlotsByProvider(req, res, next) {
 				return res.status(400).json({ message: 'date invalida' });
 			}
 			const end = start.endOf('day');
-			query.startAt = { $gte: start.toJSDate(), $lte: end.toJSDate() };
+			const dayStart = start.toJSDate();
+			const dayEnd = end.toJSDate();
+			const nowJs = new Date();
+			/* Día completo en el pasado: sin franjas */
+			if (dayEnd < nowJs) {
+				return res.status(200).json({ slots: [] });
+			}
+			/* Mismo calendario que ahora: solo tramos desde este instante */
+			const lower = dayStart < nowJs && nowJs <= dayEnd ? nowJs : dayStart;
+			if (lower > dayEnd) {
+				return res.status(200).json({ slots: [] });
+			}
+			query.startAt = { $gte: lower, $lte: dayEnd };
 		}
 
-		const slots = await AvailabilitySlot.find(query).sort({ startAt: 1 });
+		let slots = await AvailabilitySlot.find(query)
+			.sort({ startAt: 1 })
+			.populate('clinicServiceId', 'displayName kind');
+
+		/* Primer agendado o límite 31 días roto: si no hay tramos para ese día, rellenamos sólo este día. */
+		if (date && provider.providerType === 'veterinaria' && slots.length === 0) {
+			const materialized = await runVetAgendaGenerateForProvider(providerId, String(date), String(date));
+			if (materialized.ok) {
+				slots = await AvailabilitySlot.find(query)
+					.sort({ startAt: 1 })
+					.populate('clinicServiceId', 'displayName kind');
+			}
+		}
+
 		return res.status(200).json({ slots });
 	} catch (error) {
 		next(error);
@@ -152,7 +207,7 @@ async function createAppointment(req, res, next) {
 							species: petDoc.species
 						}
 					: undefined);
-			const appointment = await Appointment.create({
+			const apptPayload = {
 				ownerId: req.user.id,
 				providerId,
 				bookingSource: 'availability_slot',
@@ -163,7 +218,11 @@ async function createAppointment(req, res, next) {
 				pet: embeddedPet,
 				reason: reason || undefined,
 				status: parsedStatus.value
-			});
+			};
+			if (consumedSlot.clinicServiceId) {
+				apptPayload.clinicServiceId = consumedSlot.clinicServiceId;
+			}
+			const appointment = await Appointment.create(apptPayload);
 
 			return res.status(201).json({
 				message: 'Cita agendada correctamente',
@@ -171,12 +230,16 @@ async function createAppointment(req, res, next) {
 			});
 		} catch (createError) {
 			// Compensacion: restaurar el bloque si la cita no pudo crearse.
-			await AvailabilitySlot.create({
+			const restore = {
 				providerId: consumedSlot.providerId,
 				startAt: consumedSlot.startAt,
 				endAt: consumedSlot.endAt,
 				status: consumedSlot.status
-			});
+			};
+			if (consumedSlot.clinicServiceId) {
+				restore.clinicServiceId = consumedSlot.clinicServiceId;
+			}
+			await AvailabilitySlot.create(restore);
 			throw createError;
 		}
 	} catch (error) {
@@ -239,14 +302,20 @@ async function cancelMyAppointment(req, res, next) {
 
 		const src = appointment.bookingSource || 'availability_slot';
 		if (src === 'availability_slot' && appointment.slotId) {
+			const provObjectId = appointment.providerId._id || appointment.providerId;
+			const csid =
+				appointment.clinicServiceId ||
+				(await ensureDefaultClinicService(provObjectId))._id;
 			await AvailabilitySlot.updateOne(
 				{
-					providerId: appointment.providerId._id || appointment.providerId,
+					providerId: provObjectId,
+					clinicServiceId: csid,
 					startAt: appointment.startAt
 				},
 				{
 					$setOnInsert: {
-						providerId: appointment.providerId._id || appointment.providerId,
+						providerId: provObjectId,
+						clinicServiceId: csid,
 						startAt: appointment.startAt,
 						endAt: appointment.endAt,
 						status: 'available'
@@ -352,14 +421,18 @@ async function cancelProviderAppointment(req, res, next) {
 
 		const src = appointment.bookingSource || 'availability_slot';
 		if (src === 'availability_slot' && appointment.slotId) {
+			const provObjectId = appointment.providerId;
+			const csid = appointment.clinicServiceId || (await ensureDefaultClinicService(provObjectId))._id;
 			await AvailabilitySlot.updateOne(
 				{
-					providerId: appointment.providerId,
+					providerId: provObjectId,
+					clinicServiceId: csid,
 					startAt: appointment.startAt
 				},
 				{
 					$setOnInsert: {
-						providerId: appointment.providerId,
+						providerId: provObjectId,
+						clinicServiceId: csid,
 						startAt: appointment.startAt,
 						endAt: appointment.endAt,
 						status: 'available'

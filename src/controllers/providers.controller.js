@@ -14,7 +14,9 @@ const {
 	validatePaseadorCuidadorForPublish
 } = require('../utils/walkerProfileValidation');
 const Appointment = require('../models/Appointment');
+const ClinicService = require('../models/ClinicService');
 const { parseHHMM } = require('../utils/vetAgendaSlots');
+const { ensureDefaultClinicService } = require('../utils/clinicService.util');
 
 const PRIVATE_PROFILE_KEYS = new Set(['rejectionReason', 'reviewedAt', 'reviewedBy']);
 const DEFAULT_MAP_CENTER = {
@@ -62,7 +64,41 @@ function assertValidPublicSlug(slug) {
 
 async function buildPublicProveedorResponse(user) {
 	const id = user._id;
-	const [summary, recent] = await Promise.all([getRatingSummary(id), getRecentReviews(id, 5)]);
+	const [summary, recent, clinicServiceDocs] = await Promise.all([
+		getRatingSummary(id),
+		getRecentReviews(id, 5),
+		['veterinaria', 'paseador', 'cuidador'].includes(user.providerType)
+			? (async () => {
+					let list = await ClinicService.find({ providerId: id, active: true })
+						.sort({ displayName: 1 })
+						.select('displayName kind slotDurationMinutes priceClp currency')
+						.lean();
+					if (list.length === 0 && user.providerType === 'veterinaria') {
+						const def = await ensureDefaultClinicService(id);
+						const o = def.toObject ? def.toObject() : def;
+						list = [
+							{
+								_id: o._id,
+								displayName: o.displayName,
+								kind: o.kind,
+								slotDurationMinutes: o.slotDurationMinutes,
+								priceClp: o.priceClp,
+								currency: o.currency
+							}
+						];
+					}
+					return list.map((c) => ({
+						id: c._id,
+						displayName: c.displayName,
+						kind: c.kind,
+						slotDurationMinutes: c.slotDurationMinutes,
+						...(user.providerType === 'veterinaria'
+							? {}
+							: { priceClp: c.priceClp, currency: c.currency || 'CLP' })
+					}));
+				})()
+			: Promise.resolve([])
+	]);
 	const slug = user.providerProfile?.publicSlug || null;
 	const profilePath =
 		slug && user.providerType ? `/api/proveedores/perfil/${user.providerType}/${slug}` : null;
@@ -79,6 +115,7 @@ async function buildPublicProveedorResponse(user) {
 		profilePath,
 		seoPath,
 		perfil: toPublicProviderProfile(user.providerProfile),
+		...(clinicServiceDocs.length > 0 ? { clinicServices: clinicServiceDocs } : {}),
 		ratingSummary: summary,
 		reviewsRecent: formatReviewsForPublic(recent)
 	};

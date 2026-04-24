@@ -44,6 +44,7 @@ async function register(req, res, next) {
 			email: normalizedEmail,
 			password,
 			role: normalizedRole,
+			roles: [normalizedRole],
 			providerType: null,
 			phone: phone ? String(phone).trim() : undefined
 		});
@@ -58,6 +59,7 @@ async function register(req, res, next) {
 				lastName: user.lastName,
 				email: user.email,
 				role: user.role,
+				roles: user.roles,
 				status: user.status
 			}
 		});
@@ -86,6 +88,7 @@ async function login(req, res, next) {
 			return res.status(400).json({ message: 'Credenciales inválidas' });
 		}
 		const token = signToken({ id: user._id, role: user.role });
+		const roles = user.roles && user.roles.length > 0 ? user.roles : [user.role];
 		return res.status(200).json({
 			message: 'Login exitoso',
 			token,
@@ -95,8 +98,12 @@ async function login(req, res, next) {
 				lastName: user.lastName,
 				email: user.email,
 				role: user.role,
+				roles,
 				status: user.status,
-				...(user.role === 'proveedor' ? { providerType: user.providerType } : {})
+				...((user.role === 'proveedor' || roles.includes('proveedor')) && user.providerType
+					? { providerType: user.providerType }
+					: {}),
+				profileImage: user.profileImage
 			}
 		});
 	} catch (error) {

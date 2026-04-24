@@ -151,6 +151,16 @@ const userSchema = new mongoose.Schema(
 			default: 'dueno',
 			index: true
 		},
+		/** Mismo login con varias capacidades; si falta, se asume [role] en el middleware. */
+		roles: {
+			type: [
+				{
+					type: String,
+					enum: USER_ROLES
+				}
+			],
+			default: undefined
+		},
 		providerType: {
 			type: String,
 			default: null,

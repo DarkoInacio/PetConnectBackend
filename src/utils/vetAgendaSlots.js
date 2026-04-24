@@ -18,14 +18,15 @@ function parseHHMM(s) {
 /**
  * Día civil YYYY-MM-DD + ventana en zona horaria → instantes reales (UTC al guardar en DB).
  * @param {import('mongoose').Types.ObjectId} providerId
+ * @param {import('mongoose').Types.ObjectId} clinicServiceId
  * @param {string} ymd - YYYY-MM-DD (día local en `zone`, no UTC)
  * @param {string} startStr
  * @param {string} endStr
  * @param {string} zone - IANA, p. ej. America/Santiago
  * @param {number} stepMins
- * @returns {{ providerId, startAt: Date, endAt: Date, status: string }[]}
+ * @returns {{ providerId, clinicServiceId, startAt: Date, endAt: Date, status: string }[]}
  */
-function buildVetAgendaSlotsForCivilDay(providerId, ymd, startStr, endStr, zone, stepMins = 30) {
+function buildVetAgendaSlotsForCivilDay(providerId, clinicServiceId, ymd, startStr, endStr, zone, stepMins = 30) {
 	const defStart = 9 * 60;
 	const defEnd = 18 * 60;
 	const startMin = parseHHMM(startStr) ?? defStart;
@@ -62,6 +63,7 @@ function buildVetAgendaSlotsForCivilDay(providerId, ymd, startStr, endStr, zone,
 
 		slots.push({
 			providerId,
+			clinicServiceId,
 			startAt: startAt.toJSDate(),
 			endAt: endAt.toJSDate(),
 			status: 'available'

@@ -100,6 +100,7 @@ async function listUnifiedProviderMine(req, res, next) {
 			Appointment.find({ providerId })
 				.sort({ startAt: -1 })
 				.populate('ownerId', 'name lastName email')
+				.populate('clinicServiceId', 'displayName')
 				.lean(),
 			Cita.find({ proveedor: providerId })
 				.sort({ fecha: -1 })
@@ -114,11 +115,22 @@ async function listUnifiedProviderMine(req, res, next) {
 		const orphanCitas = citas.filter((c) => !linked.has(String(c._id)));
 
 		const merged = [
-			...appointments.map((a) => ({
-				...normalizeAppointment(a),
-				owner: a.ownerId
-			})),
-			...orphanCitas.map((c) => normalizeCita(c))
+			...appointments.map((a) => {
+				const rawCs = a.clinicServiceId;
+				const line =
+					rawCs && typeof rawCs === 'object' && (rawCs.displayName != null || rawCs._id)
+						? {
+								id: rawCs._id,
+								displayName: rawCs.displayName != null && String(rawCs.displayName).trim() !== '' ? rawCs.displayName : 'Línea'
+							}
+						: null;
+				return {
+					...normalizeAppointment(a),
+					owner: a.ownerId,
+					clinicService: line
+				};
+			}),
+			...orphanCitas.map((c) => ({ ...normalizeCita(c), clinicService: null }))
 		];
 
 		merged.sort((a, b) => {

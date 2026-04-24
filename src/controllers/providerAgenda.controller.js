@@ -1,20 +1,18 @@
 'use strict';
 
+const mongoose = require('mongoose');
 const { DateTime } = require('luxon');
 const AvailabilitySlot = require('../models/AvailabilitySlot');
 const AgendaSlotOmit = require('../models/AgendaSlotOmit');
 const User = require('../models/User');
-const {
-	parseHHMM,
-	buildVetAgendaSlotsForCivilDay,
-	listCivilDaysInRange,
-	getAgendaZone,
-	startOfTodayInZone
-} = require('../utils/vetAgendaSlots');
+const { ensureDefaultClinicService } = require('../utils/clinicService.util');
+const { getAgendaZone } = require('../utils/vetAgendaSlots');
+const { runVetAgendaGenerateForProvider } = require('../services/vetAgendaGenerateCore.service');
 
 async function ensureApprovedProvider(userId) {
-	const provider = await User.findById(userId).select('_id role status');
-	if (!provider || provider.role !== 'proveedor') {
+	const provider = await User.findById(userId).select('_id role roles status');
+	const eff = provider && provider.roles && provider.roles.length > 0 ? provider.roles : [provider?.role];
+	if (!provider || !eff.includes('proveedor')) {
 		return { ok: false, code: 403, message: 'Solo proveedores pueden gestionar agenda' };
 	}
 	if (provider.status !== 'aprobado') {
@@ -38,117 +36,25 @@ async function generateAgendaSlots(req, res, next) {
 		}
 
 		const zone = getAgendaZone();
-		const startStr = me.providerProfile?.agendaSlotStart || '09:00';
-		const endStr = me.providerProfile?.agendaSlotEnd || '18:00';
-		const sMin = parseHHMM(startStr);
-		const eMin = parseHHMM(endStr);
-		if (sMin == null || eMin == null) {
-			return res.status(400).json({ message: 'Configura inicio y fin de agenda (HH:MM) en el perfil de clínica' });
-		}
-		if (eMin <= sMin) {
-			return res.status(400).json({ message: 'En el perfil, la hora de fin de agenda debe ser mayor que el inicio' });
-		}
-
 		const nowZ = DateTime.now().setZone(zone);
 		const todayYmd = nowZ.toFormat('yyyy-LL-dd');
 		const fromDateRaw = req.body.fromDate && String(req.body.fromDate).trim() ? String(req.body.fromDate).trim() : todayYmd;
 		const toDateRaw = req.body.toDate && String(req.body.toDate).trim() ? String(req.body.toDate).trim() : fromDateRaw;
 
-		if (!/^\d{4}-\d{2}-\d{2}$/.test(fromDateRaw) || !/^\d{4}-\d{2}-\d{2}$/.test(toDateRaw)) {
-			return res.status(400).json({ message: 'Formato de fecha inválido. Usar YYYY-MM-DD' });
-		}
-
-		const fromParts = fromDateRaw.split('-').map((n) => parseInt(n, 10));
-		const fromStart = DateTime.fromObject(
-			{
-				year: fromParts[0],
-				month: fromParts[1],
-				day: fromParts[2],
-				hour: 0,
-				minute: 0,
-				second: 0,
-				millisecond: 0
-			},
-			{ zone }
-		);
-		if (!fromStart.isValid) {
-			return res.status(400).json({ message: 'Fecha "desde" no válida' });
-		}
-		if (fromStart < startOfTodayInZone(zone)) {
-			return res.status(400).json({ message: 'No se pueden generar bloques en fechas pasadas' });
-		}
-
-		const dayList = listCivilDaysInRange(fromDateRaw, toDateRaw, zone);
-		if (dayList.length === 0) {
-			return res.status(400).json({ message: 'toDate debe ser mayor o igual a fromDate' });
-		}
-		if (dayList.length > 31) {
-			return res.status(400).json({ message: 'Solo se permite generar hasta 31 días por solicitud' });
-		}
-
-		/** Candidatos (sin los que el usuario borró a mano, guardados en AgendaSlotOmit) */
-		const candidateSlots = [];
-		for (const ymd of dayList) {
-			const daySlots = buildVetAgendaSlotsForCivilDay(req.user.id, ymd, startStr, endStr, zone, 30);
-			for (const slot of daySlots) {
-				candidateSlots.push(slot);
-			}
-		}
-
-		if (candidateSlots.length === 0) {
-			return res.status(400).json({ message: 'No hay franjas que generar con el rango de hora actual' });
-		}
-
-		const candidateMs = candidateSlots.map((s) => s.startAt.getTime());
-		const oms = await AgendaSlotOmit.find({
-			providerId: req.user.id,
-			startAtMs: { $in: candidateMs }
-		})
-			.select('startAtMs')
-			.lean();
-		const omittedSet = new Set(oms.map((o) => o.startAtMs));
-		const toUpsert = candidateSlots.filter((s) => !omittedSet.has(s.startAt.getTime()));
-
-		const operations = toUpsert.map((slot) => ({
-			updateOne: {
-				filter: { providerId: slot.providerId, startAt: slot.startAt },
-				update: { $setOnInsert: slot },
-				upsert: true
-			}
-		}));
-
-		let result = { upsertedCount: 0, matchedCount: 0, modifiedCount: 0 };
-		if (operations.length > 0) {
-			result = await AvailabilitySlot.bulkWrite(operations, { ordered: false });
-		}
-		const generatedDays = dayList.length;
-		const insertedCount = result.upsertedCount || 0;
-		const totalAttempted = operations.length;
-		const alreadyPresentOrNop = totalAttempted - insertedCount;
-		const skippedReinsertDeleted = candidateSlots.length - toUpsert.length;
-
-		let message;
-		if (toUpsert.length === 0) {
-			message =
-				skippedReinsertDeleted > 0
-					? 'Ningún bloque nuevo: todas esas franjas estaban suprimidas (las borraste a mano) o ya existían. Usa «Liberar franjas suprimidas» y vuelve a generar si quieres reinsertar las eliminadas.'
-					: 'Ningún bloque nuevo: ya existen todas las franjas de ese rango y hora.';
-		} else {
-			message =
-				skippedReinsertDeleted > 0
-					? 'Bloques de agenda: se insertaron o conservaron franjas; no se reinsertan las que habías eliminado manualmente'
-					: 'Bloques de agenda generados correctamente';
+		const r = await runVetAgendaGenerateForProvider(req.user.id, fromDateRaw, toDateRaw);
+		if (!r.ok) {
+			return res.status(400).json({ message: r.message });
 		}
 
 		return res.status(201).json({
-			message,
+			message: r.message,
 			summary: {
-				generatedDays,
-				candidates: candidateSlots.length,
-				attemptedUpsert: totalAttempted,
-				insertedCount,
-				unchangedOrDupFilter: alreadyPresentOrNop,
-				respectedManualDeletes: skippedReinsertDeleted
+				generatedDays: r.dayCount,
+				lines: r.lines,
+				candidates: r.candidates,
+				attemptedUpsert: r.attemptedUpsert,
+				insertedCount: r.insertedCount,
+				unchangedOrDupFilter: r.attemptedUpsert - r.insertedCount
 			}
 		});
 	} catch (error) {
@@ -164,7 +70,13 @@ async function listMySlots(req, res, next) {
 		}
 
 		const query = { providerId: req.user.id };
-		const { from, to, fromYmd, toYmd, onlyFuture, status } = req.query;
+		const { from, to, fromYmd, toYmd, onlyFuture, status, clinicServiceId } = req.query;
+		if (clinicServiceId && String(clinicServiceId).trim()) {
+			if (!mongoose.Types.ObjectId.isValid(String(clinicServiceId).trim())) {
+				return res.status(400).json({ message: 'clinicServiceId inválido' });
+			}
+			query.clinicServiceId = String(clinicServiceId).trim();
+		}
 		if (status) {
 			if (!['available', 'blocked'].includes(status)) {
 				return res.status(400).json({ message: 'status invalido. Usar available o blocked' });
@@ -239,7 +151,9 @@ async function listMySlots(req, res, next) {
 			query.startAt = { $gte: new Date() };
 		}
 
-		const slots = await AvailabilitySlot.find(query).sort({ startAt: 1 });
+		const slots = await AvailabilitySlot.find(query)
+			.sort({ startAt: 1 })
+			.populate('clinicServiceId', 'displayName kind slotDurationMinutes');
 		return res.status(200).json({ slots });
 	} catch (error) {
 		next(error);
@@ -306,9 +220,11 @@ async function deleteMySlot(req, res, next) {
 		}
 		// Al volver a "generar", no recrear este hueco a menos que se borre el registro (DELETE /omits)
 		const ms = slot.startAt.getTime();
+		const csid =
+			slot.clinicServiceId || (await ensureDefaultClinicService(req.user.id))._id;
 		await AgendaSlotOmit.updateOne(
-			{ providerId: req.user.id, startAtMs: ms },
-			{ $setOnInsert: { providerId: req.user.id, startAtMs: ms } },
+			{ providerId: req.user.id, clinicServiceId: csid, startAtMs: ms },
+			{ $setOnInsert: { providerId: req.user.id, clinicServiceId: csid, startAtMs: ms } },
 			{ upsert: true }
 		).catch(() => {});
 		return res.status(200).json({ message: 'Bloque eliminado' });

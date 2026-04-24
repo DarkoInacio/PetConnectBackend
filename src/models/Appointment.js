@@ -27,6 +27,13 @@ const appointmentSchema = new mongoose.Schema(
 			required: true,
 			index: true
 		},
+		/** Línea de atención cuando aplica (agenda veterinaria por servicio). */
+		clinicServiceId: {
+			type: mongoose.Schema.Types.ObjectId,
+			ref: 'ClinicService',
+			sparse: true,
+			index: true
+		},
 		/** Obligatorio solo si bookingSource === availability_slot */
 		slotId: {
 			type: mongoose.Schema.Types.ObjectId,
