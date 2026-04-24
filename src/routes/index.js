@@ -14,5 +14,7 @@ router.use('/proveedores', require('./providers.routes'));
 router.use('/citas', require('./ownerAppointments.routes'));
 router.use('/pets', require('./pets.routes'));
 router.use('/vet', require('./vetClinical.routes'));
+router.use('/reviews', require('./reviews.routes'));
+router.use('/provider/reviews', require('./providerReviewsPanel.routes'));
 
 module.exports = router;

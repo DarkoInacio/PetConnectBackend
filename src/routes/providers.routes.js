@@ -13,7 +13,7 @@ const {
 	updateMyProviderProfile,
 	requestWalkerService
 } = require('../controllers/providers.controller');
-const { createProviderReview, listProviderReviews } = require('../controllers/providerReviews.controller');
+const { listProviderReviews } = require('../controllers/providerReviews.controller');
 
 router.put('/mi-perfil', auth, authorizeRoles('proveedor'), updateMyProviderProfile);
 
@@ -26,7 +26,6 @@ router.get('/perfil/:tipo/:slug', getProviderPublicProfileBySlug);
 
 router.get('/', listApprovedProviders);
 
-router.post('/:providerId/reviews', auth, authorizeRoles('dueno'), createProviderReview);
 router.get('/:providerId/reviews', listProviderReviews);
 
 router.get('/:id/perfil', getProviderPublicProfile);
