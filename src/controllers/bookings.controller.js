@@ -10,6 +10,7 @@ function normalizeAppointment(a) {
 		bookingSource: a.bookingSource || 'availability_slot',
 		legacyCitaId: a.legacyCitaId || null,
 		slotId: a.slotId || null,
+		petId: a.petId || null,
 		startAt: a.startAt,
 		endAt: a.endAt,
 		status: a.status,

@@ -110,6 +110,9 @@ const providerProfileSchema = new mongoose.Schema(
 			lowercase: true,
 			default: undefined
 		},
+		// Ventana de bloques de agenda (citas), hora "de pared" en la zona del servidor (p. ej. America/Santiago)
+		agendaSlotStart: { type: String, trim: true, default: '09:00' },
+		agendaSlotEnd: { type: String, trim: true, default: '18:00' },
 		rejectionReason: { type: String },
 		reviewedAt: { type: Date },
 		reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }

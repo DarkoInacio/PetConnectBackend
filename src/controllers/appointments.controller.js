@@ -1,12 +1,14 @@
 'use strict';
 
 const mongoose = require('mongoose');
+const { DateTime } = require('luxon');
 const Appointment = require('../models/Appointment');
 const AvailabilitySlot = require('../models/AvailabilitySlot');
 const Cita = require('../models/Cita');
 const User = require('../models/User');
 const Pet = require('../models/Pet');
 const { notifyProveedorAppointmentCancelada } = require('../utils/notifyAppointmentProveedor');
+const { getAgendaZone } = require('../utils/vetAgendaSlots');
 
 const MIN_HOURS_BEFORE_CANCEL = 2;
 const CANCELLABLE_STATUSES = ['pending_confirmation', 'confirmed'];
@@ -71,9 +73,16 @@ async function listAvailableSlotsByProvider(req, res, next) {
 				return res.status(400).json({ message: 'date invalida. Usar formato YYYY-MM-DD' });
 			}
 			const [year, month, day] = date.split('-').map(Number);
-			const from = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
-			const to = new Date(Date.UTC(year, month - 1, day, 23, 59, 59, 999));
-			query.startAt = { $gte: from, $lte: to };
+			const zone = getAgendaZone();
+			const start = DateTime.fromObject(
+				{ year, month, day, hour: 0, minute: 0, second: 0, millisecond: 0 },
+				{ zone }
+			);
+			if (!start.isValid) {
+				return res.status(400).json({ message: 'date invalida' });
+			}
+			const end = start.endOf('day');
+			query.startAt = { $gte: start.toJSDate(), $lte: end.toJSDate() };
 		}
 
 		const slots = await AvailabilitySlot.find(query).sort({ startAt: 1 });

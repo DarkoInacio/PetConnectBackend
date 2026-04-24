@@ -76,7 +76,8 @@ async function login(req, res, next) {
 		if (!email || !password) {
 			return res.status(400).json({ message: 'Email y password son obligatorios' });
 		}
-		const user = await User.findOne({ email }).select('+password');
+		const normalizedEmail = String(email).toLowerCase().trim();
+		const user = await User.findOne({ email: normalizedEmail }).select('+password');
 		if (!user) {
 			return res.status(400).json({ message: 'Credenciales inválidas' });
 		}
