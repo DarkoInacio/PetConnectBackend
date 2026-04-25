@@ -9,31 +9,23 @@ function round1(n) {
 	return Math.round(n * 10) / 10;
 }
 
-/** Reseñas públicas del proveedor: solo calificaciones del cliente hacia el profesional. */
-function matchClientToProviderOnProvider(providerId) {
-	return {
-		providerId: new mongoose.Types.ObjectId(providerId),
-		$or: [
-			{ direction: { $exists: false } },
-			{ direction: null },
-			{ direction: REVIEW_DIRECTIONS.CLIENT_TO_PROVIDER }
-		]
-	};
-}
-
-function getObservationText(d) {
-	if (!d) return '';
-	const o = d.observation != null ? String(d.observation).trim() : '';
-	if (o) return o;
-	const c = d.comment != null ? String(d.comment) : '';
-	return c.trim();
+function activeReviewMatch(providerId) {
+	const pid = new mongoose.Types.ObjectId(providerId);
+	return { providerId: pid, removedByAdmin: { $ne: true } };
 }
 
 async function getRatingSummary(providerId) {
-	const m = matchClientToProviderOnProvider(providerId);
+	const pid = new mongoose.Types.ObjectId(providerId);
+	const match = activeReviewMatch(providerId);
 	const [agg, distRows] = await Promise.all([
-		Review.aggregate([{ $match: m }, { $group: { _id: null, average: { $avg: '$rating' }, count: { $sum: 1 } } }]),
-		Review.aggregate([{ $match: m }, { $group: { _id: '$rating', count: { $sum: 1 } } }])
+		Review.aggregate([
+			{ $match: match },
+			{ $group: { _id: null, average: { $avg: '$rating' }, count: { $sum: 1 } } }
+		]),
+		Review.aggregate([
+			{ $match: match },
+			{ $group: { _id: '$rating', count: { $sum: 1 } } }
+		])
 	]);
 
 	const distribution = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
@@ -45,12 +37,21 @@ async function getRatingSummary(providerId) {
 	const count = agg[0]?.count || 0;
 	const average = count > 0 ? round1(agg[0].average) : null;
 
-	return { average, count, distribution };
+	const distributionWithPercent = {};
+	for (let s = 1; s <= 5; s++) {
+		const c = distribution[s] || 0;
+		distributionWithPercent[s] = {
+			count: c,
+			percent: count > 0 ? round1((c / count) * 100) : 0
+		};
+	}
+
+	return { average, count, distribution, distributionWithPercent };
 }
 
 async function getRecentReviews(providerId, limit = 5) {
 	const lim = Math.min(50, Math.max(1, limit));
-	return Review.find(matchClientToProviderOnProvider(providerId))
+	return Review.find(activeReviewMatch(providerId))
 		.sort({ createdAt: -1 })
 		.limit(lim)
 		.populate('ownerId', 'name lastName')
@@ -71,14 +72,13 @@ async function syncProviderRatingToUser(providerId) {
 	return summary;
 }
 
-function formatReviewsForPublic(docs) {
+function formatReviewsForPublic(docs, options = {}) {
+	const establishmentName = options.establishmentName;
 	return docs.map((d) => {
-		const text = getObservationText(d);
-		return {
+		const out = {
 			id: d._id,
 			rating: d.rating,
-			observation: text,
-			comment: text,
+			comment: d.comment || '',
 			createdAt: d.createdAt,
 			author: d.ownerId
 				? {
@@ -88,6 +88,18 @@ function formatReviewsForPublic(docs) {
 					}
 				: null
 		};
+		if (d.providerReply && d.providerReply.text) {
+			out.providerResponse = {
+				text: d.providerReply.text,
+				createdAt: d.providerReply.createdAt,
+				updatedAt: d.providerReply.updatedAt,
+				label: 'Respuesta del proveedor',
+				establishmentName: establishmentName || null
+			};
+		} else {
+			out.providerResponse = null;
+		}
+		return out;
 	});
 }
 
@@ -96,6 +108,5 @@ module.exports = {
 	getRecentReviews,
 	syncProviderRatingToUser,
 	formatReviewsForPublic,
-	getObservationText,
-	matchClientToProviderOnProvider
+	activeReviewMatch
 };

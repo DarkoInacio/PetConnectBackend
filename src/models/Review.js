@@ -2,11 +2,11 @@
 
 const mongoose = require('mongoose');
 
-const REVIEW_DIRECTIONS = Object.freeze({
-	CLIENT_TO_PROVIDER: 'client_to_provider',
-	PROVIDER_TO_CLIENT: 'provider_to_client'
-});
-
+/**
+ * Reseña ligada a una cita completada (appointmentId único).
+ * Reseñas heredades sin cita: appointmentId null (sin índice único vacío; sparse evita colisión con null en Mongo 4+).
+ * Campo removedByAdmin: false para contar en promedio; true = oculta en listados públicos.
+ */
 const reviewSchema = new mongoose.Schema(
 	{
 		providerId: {
@@ -22,17 +22,11 @@ const reviewSchema = new mongoose.Schema(
 			required: true,
 			index: true
 		},
-		/** Si existe, la reseña queda fijada a una cita concreta. */
 		appointmentId: {
 			type: mongoose.Schema.Types.ObjectId,
 			ref: 'Appointment',
 			sparse: true,
-			index: true
-		},
-		direction: {
-			type: String,
-			enum: [REVIEW_DIRECTIONS.CLIENT_TO_PROVIDER, REVIEW_DIRECTIONS.PROVIDER_TO_CLIENT],
-			default: REVIEW_DIRECTIONS.CLIENT_TO_PROVIDER
+			unique: true
 		},
 		rating: {
 			type: Number,
@@ -51,20 +45,31 @@ const reviewSchema = new mongoose.Schema(
 		comment: {
 			type: String,
 			trim: true,
-			maxlength: 2000,
+			maxlength: 500,
 			default: ''
-		}
+		},
+		/** Respuesta pública del proveedor (máx 500 caracteres en validación de controlador) */
+		providerReply: {
+			text: { type: String, trim: true, maxlength: 500, default: '' },
+			createdAt: { type: Date },
+			updatedAt: { type: Date }
+		},
+		removedByAdmin: {
+			type: Boolean,
+			default: false,
+			index: true
+		},
+		removedAt: { type: Date }
 	},
 	{
 		timestamps: true
 	}
 );
 
-reviewSchema.index(
-	{ appointmentId: 1, direction: 1 },
-	{ unique: true, partialFilterExpression: { appointmentId: { $exists: true, $ne: null } } }
-);
-reviewSchema.index({ providerId: 1, direction: 1, createdAt: -1 });
+reviewSchema.index({ providerId: 1, createdAt: -1 });
+reviewSchema.index({ providerId: 1, ownerId: 1 });
 
-module.exports = mongoose.model('Review', reviewSchema);
-module.exports.REVIEW_DIRECTIONS = REVIEW_DIRECTIONS;
+const Review = mongoose.model('Review', reviewSchema);
+module.exports = Review;
+module.exports.REVIEW_COMMENT_MAX = 500;
+module.exports.REVIEW_REPLY_MAX = 500;
