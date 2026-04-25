@@ -4,7 +4,6 @@ const mongoose = require('mongoose');
 const { DateTime } = require('luxon');
 const Appointment = require('../models/Appointment');
 const AvailabilitySlot = require('../models/AvailabilitySlot');
-const Cita = require('../models/Cita');
 const User = require('../models/User');
 const Pet = require('../models/Pet');
 const { notifyProveedorAppointmentCancelada } = require('../utils/notifyAppointmentProveedor');
@@ -360,12 +359,6 @@ async function confirmProviderAppointment(req, res, next) {
 		appointment.status = 'confirmed';
 		await appointment.save();
 
-		if (appointment.bookingSource === 'legacy_cita' && appointment.legacyCitaId) {
-			await Cita.updateOne({ _id: appointment.legacyCitaId }, { $set: { estado: 'confirmada' } }).catch(
-				(e) => console.error('[HU-14] sync confirm Cita:', e.message)
-			);
-		}
-
 		const fresh = await Appointment.findById(appointment._id)
 			.populate('ownerId', 'name lastName email')
 			.lean();
@@ -442,12 +435,6 @@ async function cancelProviderAppointment(req, res, next) {
 			);
 		}
 
-		if (src === 'legacy_cita' && appointment.legacyCitaId) {
-			await Cita.updateOne({ _id: appointment.legacyCitaId }, { $set: { estado: 'cancelada' } }).catch(
-				(e) => console.error('[HU-14] sync cancel provider Cita:', e.message)
-			);
-		}
-
 		const fresh = await Appointment.findById(appointment._id)
 			.populate('ownerId', 'name lastName email')
 			.lean();
@@ -458,8 +445,48 @@ async function cancelProviderAppointment(req, res, next) {
 }
 
 /**
+ * Marcar como completada reservas de agenda (clínica, availability_slot).
+ */
+async function completeProviderVetClinicAppointment(req, res, next) {
+	try {
+		const id = req.params.id;
+		if (!mongoose.Types.ObjectId.isValid(id)) {
+			return res.status(400).json({ message: 'Id invalido' });
+		}
+
+		const appointment = await Appointment.findOne({
+			_id: id,
+			providerId: req.user.id
+		});
+		if (!appointment) {
+			return res.status(404).json({ message: 'Reserva no encontrada' });
+		}
+		if (appointment.bookingSource !== 'availability_slot') {
+			return res.status(400).json({
+				message: 'Marcar completada aquí solo aplica a reservas de agenda (clínica)'
+			});
+		}
+		if (!['pending_confirmation', 'confirmed'].includes(appointment.status)) {
+			return res.status(400).json({
+				message: 'Solo se puede completar una reserva pendiente o ya confirmada'
+			});
+		}
+
+		appointment.status = 'completed';
+		await appointment.save();
+
+		const fresh = await Appointment.findById(appointment._id)
+			.populate('ownerId', 'name lastName email')
+			.lean();
+		return res.status(200).json({ message: 'Atención marcada como completada', appointment: fresh });
+	} catch (error) {
+		next(error);
+	}
+}
+
+/**
  * Marcar como completada solo solicitudes paseador/cuidador (walker_request).
- * No aplica a legacy_cita ni a availability_slot (veterinaria usa diagnóstico / otros flujos).
+ * Las reservas de clínica usan completeProviderVetClinicAppointment.
  */
 async function completeProviderWalkerAppointment(req, res, next) {
 	try {
@@ -505,5 +532,6 @@ module.exports = {
 	cancelMyAppointment,
 	confirmProviderAppointment,
 	cancelProviderAppointment,
+	completeProviderVetClinicAppointment,
 	completeProviderWalkerAppointment
 };

@@ -5,71 +5,19 @@ const User = require('../models/User');
 const Review = require('../models/Review');
 const {
 	getRatingSummary,
-	getRecentReviews,
-	syncProviderRatingToUser,
-	formatReviewsForPublic
+	getObservationText,
+	formatReviewsForPublic,
+	matchClientToProviderOnProvider
 } = require('../services/providerRating.service');
 
 /**
- * POST /api/proveedores/:providerId/reviews
+ * POST /api/proveedores/:providerId/reviews — obsoleto: publicar reseñas vía POST /api/appointments/:id/reviews
  */
-async function createProviderReview(req, res, next) {
-	try {
-		const { providerId } = req.params;
-		if (!mongoose.isValidObjectId(providerId)) {
-			return res.status(400).json({ message: 'Id de proveedor inválido' });
-		}
-
-		const { rating, comment } = req.body || {};
-		const r = Number(rating);
-		if (!Number.isInteger(r) || r < 1 || r > 5) {
-			return res.status(400).json({ message: 'rating debe ser un entero entre 1 y 5' });
-		}
-
-		const text = comment != null ? String(comment).trim() : '';
-		if (text.length > 2000) {
-			return res.status(400).json({ message: 'comment no puede superar 2000 caracteres' });
-		}
-
-		if (String(req.user.id) === String(providerId)) {
-			return res.status(400).json({ message: 'No puede reseñar su propio perfil de proveedor' });
-		}
-
-		const prov = await User.findById(providerId).select('role status providerProfile.isPublished');
-		if (!prov || prov.role !== 'proveedor' || prov.status !== 'aprobado') {
-			return res.status(404).json({ message: 'Proveedor no encontrado' });
-		}
-		if (prov.providerProfile && prov.providerProfile.isPublished === false) {
-			return res.status(404).json({ message: 'Proveedor no encontrado' });
-		}
-
-		try {
-			await Review.create({
-				providerId,
-				ownerId: req.user.id,
-				rating: r,
-				comment: text
-			});
-		} catch (err) {
-			if (err.code === 11000) {
-				return res.status(409).json({ message: 'Ya existe una reseña suya para este proveedor' });
-			}
-			throw err;
-		}
-
-		await syncProviderRatingToUser(providerId);
-
-		const summary = await getRatingSummary(providerId);
-		const recent = await getRecentReviews(providerId, 5);
-
-		return res.status(201).json({
-			message: 'Reseña registrada',
-			ratingSummary: summary,
-			reviewsRecent: formatReviewsForPublic(recent)
-		});
-	} catch (err) {
-		next(err);
-	}
+async function createProviderReview(_req, res) {
+	return res.status(400).json({
+		message:
+			'Usa el flujo por cita: con la reserva en estado "completada", publica con POST /api/appointments/:citaId/reviews'
+	});
 }
 
 /**
@@ -95,10 +43,20 @@ async function listProviderReviews(req, res, next) {
 		const limite = Math.min(50, Math.max(1, limiteRaw));
 		const skip = (pagina - 1) * limite;
 
+		const match = matchClientToProviderOnProvider(providerId);
+		const rawOrden = (req.query.orden != null && String(req.query.orden)) || 'reciente';
+		const o = String(rawOrden).toLowerCase();
+		const sort =
+			o === 'mayor' || o === 'rating_mayor' || o === 'alta'
+				? { rating: -1, createdAt: -1 }
+				: o === 'menor' || o === 'rating_menor' || o === 'baja'
+					? { rating: 1, createdAt: -1 }
+					: { createdAt: -1 };
+
 		const [total, docs, summary] = await Promise.all([
-			Review.countDocuments({ providerId }),
-			Review.find({ providerId })
-				.sort({ createdAt: -1 })
+			Review.countDocuments(match),
+			Review.find(match)
+				.sort(sort)
 				.skip(skip)
 				.limit(limite)
 				.populate('ownerId', 'name lastName')
@@ -118,7 +76,61 @@ async function listProviderReviews(req, res, next) {
 	}
 }
 
+/**
+ * GET /api/provider/reviews?prioridad=pendientes|recientes
+ * Reseñas recibidas (cliente → proveedor) de la clínica / proveedor autenticado.
+ */
+async function listProviderOwnReviews(req, res, next) {
+	try {
+		const providerId = String(req.user.id);
+		if (!mongoose.isValidObjectId(providerId)) {
+			return res.status(400).json({ message: 'Sesión de proveedor inválida' });
+		}
+
+		const match = matchClientToProviderOnProvider(providerId);
+		const sort =
+			(req.query.prioridad && String(req.query.prioridad).toLowerCase()) === 'recientes'
+				? { createdAt: -1 }
+				: { createdAt: -1 };
+		/* "pendientes" hoy = más reciente primero (sin capa de respuestas aún) */
+		const limite = 200;
+		const docs = await Review.find(match)
+			.sort(sort)
+			.limit(limite)
+			.populate('ownerId', 'name lastName')
+			.lean();
+
+		const reviews = docs.map((d) => {
+			const text = getObservationText(d);
+			return {
+				_id: d._id,
+				rating: d.rating,
+				comment: text,
+				observation: text,
+				createdAt: d.createdAt,
+				ownerId: d.ownerId
+					? { _id: d.ownerId._id || d.ownerId, name: d.ownerId.name, lastName: d.ownerId.lastName }
+					: null,
+				providerReply: null,
+				estadoRespuesta: 'sin_responder'
+			};
+		});
+
+		return res.status(200).json({ reviews, total: reviews.length });
+	} catch (err) {
+		next(err);
+	}
+}
+
+function notImplementedProviderReviewReply(_req, res) {
+	return res
+		.status(501)
+		.json({ message: 'Responder a reseñas desde el panel aún no está activo en el servidor.' });
+}
+
 module.exports = {
 	createProviderReview,
-	listProviderReviews
+	listProviderReviews,
+	listProviderOwnReviews,
+	notImplementedProviderReviewReply
 };
