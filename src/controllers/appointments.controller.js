@@ -561,6 +561,7 @@ module.exports = {
 	cancelMyAppointment,
 	confirmProviderAppointment,
 	cancelProviderAppointment,
+	completeProviderVetClinicAppointment,
 	completeProviderWalkerAppointment,
 	completeProviderVisit
 };

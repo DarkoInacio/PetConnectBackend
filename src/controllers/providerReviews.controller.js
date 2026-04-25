@@ -113,5 +113,7 @@ function notImplementedProviderReviewReply(_req, res) {
 }
 
 module.exports = {
-	listProviderReviews
+	listProviderReviews,
+	listProviderOwnReviews,
+	notImplementedProviderReviewReply
 };
