@@ -7,7 +7,6 @@ const http = require('http');
 const { logScopeIfSpa } = require('./config/apiScope');
 const app = require('./app');
 const { connectMongo } = require('./config/db');
-const { startOwnerAppointmentsCronJobs } = require('./jobs/ownerAppointmentsCron');
 const { startAppointmentReminderJob } = require('./jobs/appointmentReminders.job');
 
 const PORT = process.env.PORT || 3000;
@@ -15,8 +14,6 @@ const PORT = process.env.PORT || 3000;
 async function startServer() {
 	// Conectar a MongoDB
 	await connectMongo();
-
-	startOwnerAppointmentsCronJobs();
 
 	// Iniciar servidor HTTP
 	const server = http.createServer(app);

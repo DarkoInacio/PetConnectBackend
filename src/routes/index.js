@@ -9,7 +9,9 @@ router.use('/auth', require('./auth.routes'));
 router.use('/profile', require('./profile.routes'));
 router.use('/provider/agenda', require('./providerAgenda.routes'));
 router.use('/provider/clinic-services', require('./clinicServices.routes'));
+router.use('/provider', require('./providerPanel.routes'));
 router.use('/appointments', require('./appointments.routes'));
+router.use('/reviews', require('./reviews.routes'));
 router.use('/bookings', require('./bookings.routes'));
 
 if (!isSpaScope()) {

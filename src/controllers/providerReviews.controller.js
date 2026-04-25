@@ -60,6 +60,58 @@ async function listProviderReviews(req, res, next) {
 	}
 }
 
+/**
+ * GET /api/provider/reviews?prioridad=pendientes|recientes
+ * Reseñas recibidas (cliente → proveedor) de la clínica / proveedor autenticado.
+ */
+async function listProviderOwnReviews(req, res, next) {
+	try {
+		const providerId = String(req.user.id);
+		if (!mongoose.isValidObjectId(providerId)) {
+			return res.status(400).json({ message: 'Sesión de proveedor inválida' });
+		}
+
+		const match = matchClientToProviderOnProvider(providerId);
+		const sort =
+			(req.query.prioridad && String(req.query.prioridad).toLowerCase()) === 'recientes'
+				? { createdAt: -1 }
+				: { createdAt: -1 };
+		/* "pendientes" hoy = más reciente primero (sin capa de respuestas aún) */
+		const limite = 200;
+		const docs = await Review.find(match)
+			.sort(sort)
+			.limit(limite)
+			.populate('ownerId', 'name lastName')
+			.lean();
+
+		const reviews = docs.map((d) => {
+			const text = getObservationText(d);
+			return {
+				_id: d._id,
+				rating: d.rating,
+				comment: text,
+				observation: text,
+				createdAt: d.createdAt,
+				ownerId: d.ownerId
+					? { _id: d.ownerId._id || d.ownerId, name: d.ownerId.name, lastName: d.ownerId.lastName }
+					: null,
+				providerReply: null,
+				estadoRespuesta: 'sin_responder'
+			};
+		});
+
+		return res.status(200).json({ reviews, total: reviews.length });
+	} catch (err) {
+		next(err);
+	}
+}
+
+function notImplementedProviderReviewReply(_req, res) {
+	return res
+		.status(501)
+		.json({ message: 'Responder a reseñas desde el panel aún no está activo en el servidor.' });
+}
+
 module.exports = {
 	listProviderReviews
 };

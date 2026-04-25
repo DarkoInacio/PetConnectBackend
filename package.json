@@ -8,7 +8,6 @@
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
     "start:prod": "NODE_ENV=production node src/server.js",
-    "migrate:citas": "node scripts/migrate-citas-to-appointments.js",
     "migrate:clinic-services": "node scripts/migrate-clinic-services.js",
     "seed:admin": "node scripts/create-admin.js"
   },

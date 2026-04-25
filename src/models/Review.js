@@ -15,6 +15,7 @@ const reviewSchema = new mongoose.Schema(
 			required: true,
 			index: true
 		},
+		/** Dueño (cliente) involucrado en la cita. */
 		ownerId: {
 			type: mongoose.Schema.Types.ObjectId,
 			ref: 'User',
@@ -33,6 +34,14 @@ const reviewSchema = new mongoose.Schema(
 			min: 1,
 			max: 5
 		},
+		/** Observación opcional (máx. 200 caracteres). Sustituye a `comment` en integraciones nuevas. */
+		observation: {
+			type: String,
+			trim: true,
+			maxlength: 200,
+			default: ''
+		},
+		/** @deprecated Reservado por datos anteriores; leer vía getObservation() en servicios. */
 		comment: {
 			type: String,
 			trim: true,

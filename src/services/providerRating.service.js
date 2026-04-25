@@ -3,6 +3,7 @@
 const mongoose = require('mongoose');
 const Review = require('../models/Review');
 const User = require('../models/User');
+const { REVIEW_DIRECTIONS } = Review;
 
 function round1(n) {
 	return Math.round(n * 10) / 10;
