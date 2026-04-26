@@ -21,9 +21,6 @@ services:
       # - MAIL_* (opcional, recordatorios)
       # - ADMIN_NOTIFICATION_EMAILS (opcional)
       - key: UPLOADS_DIR
-        value: /var/data/uploads
-    disk:
-      name: uploads
-      mountPath: /var/data
-      sizeGB: 1
+        # Free tier: sin disco persistente (uploads efímeros; se pierden en restarts).
+        value: /tmp/uploads
 
