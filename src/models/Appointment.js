@@ -34,12 +34,10 @@ const appointmentSchema = new mongoose.Schema(
 			sparse: true,
 			index: true
 		},
-		/** Obligatorio solo si bookingSource === availability_slot */
+		/** Obligatorio solo si bookingSource === availability_slot; walker_request no lleva slot. */
 		slotId: {
 			type: mongoose.Schema.Types.ObjectId,
-			ref: 'AvailabilitySlot',
-			sparse: true,
-			unique: true
+			ref: 'AvailabilitySlot'
 		},
 		/** Reserva por franja de agenda o solicitud paseador/cuidador */
 		bookingSource: {
@@ -107,6 +105,15 @@ appointmentSchema.pre('validate', function (next) {
 	}
 	next();
 });
+
+/** Unicidad solo cuando hay slot real; varias solicitudes walker_request sin slot no colisionan (E11000). */
+appointmentSchema.index(
+	{ slotId: 1 },
+	{
+		unique: true,
+		partialFilterExpression: { slotId: { $type: 'objectId' } }
+	}
+);
 
 module.exports = mongoose.model('Appointment', appointmentSchema);
 module.exports.APPOINTMENT_STATUSES = APPOINTMENT_STATUSES;

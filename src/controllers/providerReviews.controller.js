@@ -17,8 +17,14 @@ async function listProviderReviews(req, res, next) {
 			return res.status(400).json({ message: 'Id de proveedor inválido' });
 		}
 
-		const prov = await User.findById(providerId).select('role status providerProfile.isPublished name lastName');
-		if (!prov || prov.role !== 'proveedor' || prov.status !== 'aprobado') {
+		const prov = await User.findById(providerId).select(
+			'role roles status providerProfile.isPublished name lastName'
+		);
+		const isApprovedProv =
+			prov &&
+			prov.status === 'aprobado' &&
+			(prov.role === 'proveedor' || (Array.isArray(prov.roles) && prov.roles.includes('proveedor')));
+		if (!isApprovedProv) {
 			return res.status(404).json({ message: 'Proveedor no encontrado' });
 		}
 		if (prov.providerProfile && prov.providerProfile.isPublished === false) {
@@ -113,5 +119,7 @@ function notImplementedProviderReviewReply(_req, res) {
 }
 
 module.exports = {
-	listProviderReviews
+	listProviderReviews,
+	listProviderOwnReviews,
+	notImplementedProviderReviewReply
 };
