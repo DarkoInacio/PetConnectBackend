@@ -26,10 +26,9 @@ function buildCorsOrigin() {
 				.filter(Boolean)
 		: [];
 	if (process.env.NODE_ENV === 'production') {
-		if (fromEnv.length === 0) {
-			return true;
-		}
-		return fromEnv.length === 1 ? fromEnv[0] : fromEnv;
+		const prodDefaults = ['https://petconnect-web-two.vercel.app'];
+		const allowed = Array.from(new Set([...prodDefaults, ...fromEnv]));
+		return allowed.length === 1 ? allowed[0] : allowed;
 	}
 	const devVite = [
 		'http://localhost:5173',
