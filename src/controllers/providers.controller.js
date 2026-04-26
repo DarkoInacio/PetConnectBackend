@@ -42,6 +42,14 @@ const RESERVED_PUBLIC_SLUGS = new Set([
 
 const PROVIDER_KINDS = ['veterinaria', 'paseador', 'cuidador'];
 
+/** Cuenta aprobada con capacidad de proveedor (rol único o array roles — ej. dueño+proveedor mismo login). */
+function isApprovedProviderUserDoc(user) {
+	if (!user || user.status !== 'aprobado') return false;
+	if (user.role === 'proveedor') return true;
+	if (Array.isArray(user.roles) && user.roles.includes('proveedor')) return true;
+	return false;
+}
+
 function assertValidPublicSlug(slug) {
 	if (typeof slug !== 'string') {
 		throw Object.assign(new Error('publicSlug inválido'), { status: 400 });
@@ -122,9 +130,7 @@ async function buildPublicProveedorResponse(user) {
 }
 
 function assertProviderVisiblePublic(user) {
-	if (!user || user.role !== 'proveedor' || user.status !== 'aprobado') {
-		return false;
-	}
+	if (!isApprovedProviderUserDoc(user)) return false;
 	if (user.providerProfile && user.providerProfile.isPublished === false) {
 		return false;
 	}
@@ -153,7 +159,7 @@ async function getProviderPublicProfile(req, res, next) {
 			return res.status(400).json({ message: 'Id de proveedor inválido' });
 		}
 		const user = await User.findById(id).select(
-			'name lastName phone profileImage providerType role status providerProfile'
+			'name lastName phone profileImage providerType role roles status providerProfile'
 		);
 		if (!assertProviderVisiblePublic(user)) {
 			return res.status(404).json({ message: 'Proveedor no encontrado' });
@@ -180,12 +186,12 @@ async function getProviderPublicProfileBySlug(req, res, next) {
 		}
 
 		const user = await User.findOne({
-			role: 'proveedor',
 			status: 'aprobado',
 			providerType: tipo,
 			'providerProfile.publicSlug': slug,
-			'providerProfile.isPublished': { $ne: false }
-		}).select('name lastName phone profileImage providerType role status providerProfile');
+			'providerProfile.isPublished': { $ne: false },
+			$or: [{ role: 'proveedor' }, { roles: 'proveedor' }]
+		}).select('name lastName phone profileImage providerType role status providerProfile roles');
 
 		if (!user) {
 			return res.status(404).json({ message: 'Proveedor no encontrado' });
@@ -202,9 +208,9 @@ const WEEK_DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'satu
 
 function buildProviderFilter(q) {
 	const filter = {
-		role: 'proveedor',
 		status: 'aprobado',
-		'providerProfile.isPublished': { $ne: false }
+		'providerProfile.isPublished': { $ne: false },
+		$and: [{ $or: [{ role: 'proveedor' }, { roles: 'proveedor' }] }]
 	};
 
 	if (q.tipo !== undefined && String(q.tipo).trim()) {
@@ -223,11 +229,13 @@ function buildProviderFilter(q) {
 	if (q.ciudad !== undefined && String(q.ciudad).trim()) {
 		const esc = String(q.ciudad).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 		const re = new RegExp(esc, 'i');
-		filter.$or = [
-			{ 'providerProfile.address.city': re },
-			{ 'providerProfile.address.commune': re },
-			{ 'providerProfile.serviceCommunes': re }
-		];
+		filter.$and.push({
+			$or: [
+				{ 'providerProfile.address.city': re },
+				{ 'providerProfile.address.commune': re },
+				{ 'providerProfile.serviceCommunes': re }
+			]
+		});
 	}
 
 	const amountCond = {};
@@ -251,6 +259,12 @@ function buildProviderFilter(q) {
 			});
 		}
 		filter['providerProfile.operationalStatus'] = estadoOperacion;
+	}
+
+	// Filtro: clínicas 24/7 (solo veterinarias). Se basa en providerProfile.schedule comenzando con "24/7".
+	if (q.open24 !== undefined && String(q.open24).trim() !== '' && String(q.open24) !== '0') {
+		filter.providerType = 'veterinaria';
+		filter['providerProfile.schedule'] = /^24\/7/i;
 	}
 
 	return filter;
@@ -360,7 +374,10 @@ async function listApprovedProviders(req, res, next) {
 		const limiteRaw = parseInt(req.query.limite, 10) || 10;
 		const limite = Math.min(100, Math.max(1, limiteRaw));
 
-		const filter = { role: 'proveedor', status: 'aprobado' };
+		const filter = {
+			status: 'aprobado',
+			$and: [{ $or: [{ role: 'proveedor' }, { roles: 'proveedor' }] }]
+		};
 		if (tipo !== undefined && String(tipo).trim()) {
 			if (!PROVIDER_KINDS.includes(String(tipo).trim())) {
 				return res.status(400).json({ message: 'tipo debe ser veterinaria, paseador o cuidador' });
@@ -370,10 +387,9 @@ async function listApprovedProviders(req, res, next) {
 		if (ciudad !== undefined && String(ciudad).trim()) {
 			const esc = String(ciudad).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 			const re = new RegExp(esc, 'i');
-			filter.$or = [
-				{ 'providerProfile.address.city': re },
-				{ 'providerProfile.address.commune': re }
-			];
+			filter.$and.push({
+				$or: [{ 'providerProfile.address.city': re }, { 'providerProfile.address.commune': re }]
+			});
 		}
 
 		const skip = (pagina - 1) * limite;
@@ -819,8 +835,12 @@ async function updateMyProviderProfile(req, res, next) {
 		if (Object.keys($set).length) updateOps.$set = $set;
 		if (Object.keys($unset).length) updateOps.$unset = $unset;
 
+		// Misma lógica que authorizeRoles: cuenta dual (role dueno + roles proveedor) debe poder actualizar.
 		const user = await User.findOneAndUpdate(
-			{ _id: req.user.id, role: 'proveedor' },
+			{
+				_id: req.user.id,
+				$or: [{ role: 'proveedor' }, { roles: 'proveedor' }]
+			},
 			updateOps,
 			{ new: true, runValidators: true, context: 'query' }
 		).select('-password -passwordResetToken -passwordResetExpires');
@@ -859,9 +879,9 @@ async function requestWalkerService(req, res, next) {
 		}
 
 		const prov = await User.findById(providerId).select(
-			'role status providerType providerProfile.isPublished'
+			'role roles status providerType providerProfile.isPublished'
 		);
-		if (!prov || prov.role !== 'proveedor' || prov.status !== 'aprobado') {
+		if (!prov || !isApprovedProviderUserDoc(prov)) {
 			return res.status(404).json({ message: 'Proveedor no encontrado' });
 		}
 		if (prov.providerType !== 'paseador' && prov.providerType !== 'cuidador') {

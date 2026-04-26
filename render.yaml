@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: petconnect-backend
+    env: node
+    region: oregon
+    plan: free
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      # Configura en Render Dashboard (no en repo):
+      # - MONGODB_URI
+      # - CLIENT_URL (tu dominio de Vercel, ej. https://tu-app.vercel.app)
+      # - OPENAI_API_KEY (si usarás Vetto con IA)
+      # - OPENAI_MODEL (opcional)
+      # - MAIL_* (opcional, recordatorios)
+      # - ADMIN_NOTIFICATION_EMAILS (opcional)
+      - key: UPLOADS_DIR
+        # Free tier: sin disco persistente (uploads efímeros; se pierden en restarts).
+        value: /tmp/uploads
+

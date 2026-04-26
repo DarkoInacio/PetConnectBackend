@@ -160,8 +160,12 @@ async function createAppointment(req, res, next) {
 			return res.status(400).json({ message: 'providerId, slotId o petId invalido' });
 		}
 
-		const provider = await User.findById(providerId).select('_id role status');
-		if (!provider || provider.role !== 'proveedor') {
+		const provider = await User.findById(providerId).select('_id role roles status');
+		const isProv =
+			provider &&
+			(provider.role === 'proveedor' ||
+				(Array.isArray(provider.roles) && provider.roles.includes('proveedor')));
+		if (!provider || !isProv) {
 			return res.status(404).json({ message: 'Proveedor no encontrado' });
 		}
 		if (provider.status !== 'aprobado') {
@@ -561,6 +565,7 @@ module.exports = {
 	cancelMyAppointment,
 	confirmProviderAppointment,
 	cancelProviderAppointment,
+	completeProviderVetClinicAppointment,
 	completeProviderWalkerAppointment,
 	completeProviderVisit
 };

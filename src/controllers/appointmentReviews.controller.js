@@ -93,10 +93,14 @@ async function createReviewForAppointment(req, res, next) {
 		}
 
 		const [prov, ownerU] = await Promise.all([
-			User.findById(appt.providerId).select('email name lastName status role'),
+			User.findById(appt.providerId).select('email name lastName status role roles'),
 			User.findById(req.user.id).select('name lastName email')
 		]);
-		if (!prov || prov.role !== 'proveedor' || prov.status !== 'aprobado') {
+		const provOk =
+			prov &&
+			prov.status === 'aprobado' &&
+			(prov.role === 'proveedor' || (Array.isArray(prov.roles) && prov.roles.includes('proveedor')));
+		if (!provOk) {
 			return res.status(400).json({ message: 'Proveedor no disponible' });
 		}
 
