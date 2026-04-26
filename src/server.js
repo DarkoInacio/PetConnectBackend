@@ -11,7 +11,19 @@ const { startAppointmentReminderJob } = require('./jobs/appointmentReminders.job
 
 const PORT = process.env.PORT || 3000;
 
+function requireEnv(key) {
+	const value = process.env[key];
+	if (!value || String(value).trim() === '') {
+		throw new Error(`${key} no está definido en variables de entorno.`);
+	}
+	return value;
+}
+
 async function startServer() {
+	// Variables críticas (fallar rápido con mensaje claro)
+	requireEnv('JWT_SECRET');
+	requireEnv('MONGODB_URI');
+
 	// Conectar a MongoDB
 	await connectMongo();
 

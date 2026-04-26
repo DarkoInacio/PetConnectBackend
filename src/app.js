@@ -26,8 +26,16 @@ function buildCorsOrigin() {
 				.filter(Boolean)
 		: [];
 	if (process.env.NODE_ENV === 'production') {
+		/* Vercel + orígenes extra en CLIENT_URL. Incluimos Vite en localhost: el front
+		 * a veces se sirve ahi mientras VITE_API_BASE_URL apunta a Render. */
 		const prodDefaults = ['https://petconnect-web-two.vercel.app'];
-		const allowed = Array.from(new Set([...prodDefaults, ...fromEnv]));
+		const localVite = [
+			'http://localhost:5173',
+			'http://localhost:5174',
+			'http://127.0.0.1:5173',
+			'http://127.0.0.1:5174'
+		];
+		const allowed = Array.from(new Set([...prodDefaults, ...localVite, ...fromEnv]));
 		return allowed.length === 1 ? allowed[0] : allowed;
 	}
 	const devVite = [
