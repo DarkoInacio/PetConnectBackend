@@ -9,9 +9,9 @@ const User = require('../models/User');
 const { findPetForOwner, vetHasAccessToPet } = require('../services/petAccess.service');
 const { processPetImageBufferToJpeg, PET_UPLOAD_SUBDIR } = require('../utils/processPetImage');
 const { streamMedicalRecordPdf } = require('../services/medicalPdf.service');
+const { uploadsRoot } = require('../config/uploads');
 
 const MAX_ACTIVE_PETS = 10;
-const uploadsRoot = path.join(__dirname, '..', 'uploads');
 const petsDir = path.join(uploadsRoot, 'pets');
 const clinicalDir = path.join(uploadsRoot, 'clinical');
 

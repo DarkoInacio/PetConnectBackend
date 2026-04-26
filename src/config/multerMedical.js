@@ -2,12 +2,10 @@
 
 const multer = require('multer');
 const path = require('path');
-const fs = require('fs');
+const { uploadsRoot, ensureDir } = require('./uploads');
 
-const clinicalDir = path.join(__dirname, '..', 'uploads', 'clinical');
-if (!fs.existsSync(clinicalDir)) {
-	fs.mkdirSync(clinicalDir, { recursive: true });
-}
+const clinicalDir = path.join(uploadsRoot, 'clinical');
+ensureDir(clinicalDir);
 
 const storage = multer.diskStorage({
 	destination: function (req, file, cb) {
