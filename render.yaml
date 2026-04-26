@@ -15,7 +15,8 @@ services:
         value: 10000
       # Configura en Render Dashboard (no en repo):
       # - MONGODB_URI
-      # - CLIENT_URL (tu dominio de Vercel, ej. https://tu-app.vercel.app)
+      # - CLIENT_URL (Vercel u otros, separados por coma; p. ej. otra app en preview)
+      #   CORS: localhost:5173/5174 ya está en código para dev; CLIENT_URL añade más
       # - OPENAI_API_KEY (si usarás Vetto con IA)
       # - OPENAI_MODEL (opcional)
       # - MAIL_* (opcional, recordatorios)
