@@ -10,16 +10,20 @@ const {
 	listMySlots,
 	blockMySlot,
 	unblockMySlot,
-	deleteMySlot
+	deleteMySlot,
+	clearOmittedAgendaSlots
 } = require('../controllers/providerAgenda.controller');
 
 router.use(auth, authorizeRoles('proveedor'));
 
-// Genera bloques según horario de recepción del perfil (Mi perfil), tramos de 30 min en hora Chile
+// Genera bloques de 30 min según agendaSlotStart/End del perfil (zona AGENDA_TIMEZONE, p. ej. America/Santiago)
 router.post('/generate', generateAgendaSlots);
 
 // Lista bloques del proveedor autenticado
 router.get('/slots', listMySlots);
+
+// Olvida franjas "eliminadas a mano" (para que "generar" vuelva a ofrecerlas)
+router.delete('/omits', clearOmittedAgendaSlots);
 
 // Bloquea/desbloquea disponibilidad puntual
 router.patch('/slots/:slotId/block', blockMySlot);

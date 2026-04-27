@@ -9,9 +9,10 @@ const User = require('../models/User');
 const { findPetForOwner, vetHasAccessToPet } = require('../services/petAccess.service');
 const { processPetImageBufferToJpeg, PET_UPLOAD_SUBDIR } = require('../utils/processPetImage');
 const { streamMedicalRecordPdf } = require('../services/medicalPdf.service');
+const { uploadsRoot } = require('../config/uploads');
+const { parseCivilYmdToStoredDate } = require('../utils/civilDate');
 
 const MAX_ACTIVE_PETS = 10;
-const uploadsRoot = path.join(__dirname, '..', 'uploads');
 const petsDir = path.join(uploadsRoot, 'pets');
 const clinicalDir = path.join(uploadsRoot, 'clinical');
 
@@ -45,8 +46,8 @@ async function createPet(req, res, next) {
 
 		let birth = null;
 		if (birthDate != null && String(birthDate).trim()) {
-			birth = new Date(birthDate);
-			if (Number.isNaN(birth.getTime())) {
+			birth = parseCivilYmdToStoredDate(birthDate);
+			if (birth == null) {
 				return res.status(400).json({ message: 'birthDate invalida' });
 			}
 		}
@@ -132,8 +133,8 @@ async function updatePet(req, res, next) {
 			if (birthDate === null || !String(birthDate).trim()) {
 				pet.birthDate = null;
 			} else {
-				const b = new Date(birthDate);
-				if (Number.isNaN(b.getTime())) {
+				const b = parseCivilYmdToStoredDate(birthDate);
+				if (b == null) {
 					return res.status(400).json({ message: 'birthDate invalida' });
 				}
 				pet.birthDate = b;

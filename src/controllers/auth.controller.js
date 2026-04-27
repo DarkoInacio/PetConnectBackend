@@ -44,6 +44,7 @@ async function register(req, res, next) {
 			email: normalizedEmail,
 			password,
 			role: normalizedRole,
+			roles: [normalizedRole],
 			providerType: null,
 			phone: phone ? String(phone).trim() : undefined
 		});
@@ -58,6 +59,7 @@ async function register(req, res, next) {
 				lastName: user.lastName,
 				email: user.email,
 				role: user.role,
+				roles: user.roles,
 				status: user.status
 			}
 		});
@@ -76,7 +78,8 @@ async function login(req, res, next) {
 		if (!email || !password) {
 			return res.status(400).json({ message: 'Email y password son obligatorios' });
 		}
-		const user = await User.findOne({ email }).select('+password');
+		const normalizedEmail = String(email).toLowerCase().trim();
+		const user = await User.findOne({ email: normalizedEmail }).select('+password');
 		if (!user) {
 			return res.status(400).json({ message: 'Credenciales inválidas' });
 		}
@@ -85,6 +88,7 @@ async function login(req, res, next) {
 			return res.status(400).json({ message: 'Credenciales inválidas' });
 		}
 		const token = signToken({ id: user._id, role: user.role });
+		const roles = user.roles && user.roles.length > 0 ? user.roles : [user.role];
 		return res.status(200).json({
 			message: 'Login exitoso',
 			token,
@@ -94,8 +98,12 @@ async function login(req, res, next) {
 				lastName: user.lastName,
 				email: user.email,
 				role: user.role,
+				roles,
 				status: user.status,
-				...(user.role === 'proveedor' ? { providerType: user.providerType } : {})
+				...((user.role === 'proveedor' || roles.includes('proveedor')) && user.providerType
+					? { providerType: user.providerType }
+					: {}),
+				profileImage: user.profileImage
 			}
 		});
 	} catch (error) {
@@ -124,6 +132,16 @@ async function forgotPassword(req, res, next) {
 		const resetUrl = `${process.env.CLIENT_URL || 'http://localhost:5173'}/reset-password?token=${resetToken}&email=${encodeURIComponent(
 			user.email
 		)}`;
+
+		// En desarrollo devolvemos el link directamente para facilitar pruebas
+		// sin depender de un proveedor SMTP configurado.
+		if (process.env.NODE_ENV !== 'production') {
+			return res.status(200).json({
+				message: 'Link de recuperación generado (modo desarrollo)',
+				resetUrl
+			});
+		}
+
 		await sendEmail({
 			to: user.email,
 			subject: 'Recuperación de contraseña',
@@ -132,6 +150,19 @@ async function forgotPassword(req, res, next) {
 
 		return res.status(200).json({ message: 'Si el correo existe, enviaremos instrucciones' });
 	} catch (error) {
+		if (error.code === 'MAIL_CONFIG_MISSING') {
+			return res.status(500).json({ message: error.message });
+		}
+		if (
+			error &&
+			(error.responseCode === 535 ||
+				error.code === 'EAUTH' ||
+				(typeof error.message === 'string' && error.message.includes('Invalid login')))
+		) {
+			return res.status(500).json({
+				message: 'No se pudo enviar el correo de recuperación. Revisa MAIL_USER y MAIL_PASS del backend.'
+			});
+		}
 		next(error);
 	}
 }

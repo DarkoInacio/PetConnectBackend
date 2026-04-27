@@ -8,8 +8,7 @@ const Pet = require('../models/Pet');
 const ClinicalEncounter = require('../models/ClinicalEncounter');
 const User = require('../models/User');
 const { assertVetAppointmentForPet } = require('../services/petAccess.service');
-
-const uploadsRoot = path.join(__dirname, '..', 'uploads');
+const { uploadsRoot } = require('../config/uploads');
 
 const LATE_CREATE_MS = 72 * 60 * 60 * 1000;
 

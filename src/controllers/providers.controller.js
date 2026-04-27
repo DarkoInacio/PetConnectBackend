@@ -2,7 +2,6 @@
 
 const mongoose = require('mongoose');
 const User = require('../models/User');
-const ClinicService = require('../models/ClinicService');
 const { distanceKm } = require('../utils/haversine');
 const { geocodeAddressNominatim } = require('../utils/geocodeNominatim');
 const {
@@ -15,8 +14,9 @@ const {
 	validatePaseadorCuidadorForPublish
 } = require('../utils/walkerProfileValidation');
 const Appointment = require('../models/Appointment');
-const { isProveedorAprobado } = require('../utils/providerEligibility');
-const { parseWallHmStrict, wallMinutesFromHm } = require('../utils/chileCalendar');
+const ClinicService = require('../models/ClinicService');
+const { parseHHMM } = require('../utils/vetAgendaSlots');
+const { ensureDefaultClinicService } = require('../utils/clinicService.util');
 
 const PRIVATE_PROFILE_KEYS = new Set(['rejectionReason', 'reviewedAt', 'reviewedBy']);
 const DEFAULT_MAP_CENTER = {
@@ -42,6 +42,14 @@ const RESERVED_PUBLIC_SLUGS = new Set([
 
 const PROVIDER_KINDS = ['veterinaria', 'paseador', 'cuidador'];
 
+/** Cuenta aprobada con capacidad de proveedor (rol único o array roles — ej. dueño+proveedor mismo login). */
+function isApprovedProviderUserDoc(user) {
+	if (!user || user.status !== 'aprobado') return false;
+	if (user.role === 'proveedor') return true;
+	if (Array.isArray(user.roles) && user.roles.includes('proveedor')) return true;
+	return false;
+}
+
 function assertValidPublicSlug(slug) {
 	if (typeof slug !== 'string') {
 		throw Object.assign(new Error('publicSlug inválido'), { status: 400 });
@@ -62,30 +70,48 @@ function assertValidPublicSlug(slug) {
 	return s;
 }
 
-function mapClinicServicePublic(row) {
-	return {
-		id: row._id,
-		_id: row._id,
-		displayName: row.displayName,
-		slotDurationMinutes: row.slotDurationMinutes,
-		priceClp: row.priceClp != null ? row.priceClp : undefined,
-		currency: row.currency || 'CLP',
-		active: row.active !== false
-	};
-}
-
 async function buildPublicProveedorResponse(user) {
 	const id = user._id;
-	const [summary, recent, clinicRows] = await Promise.all([
+	const [summary, recent, clinicServiceDocs] = await Promise.all([
 		getRatingSummary(id),
 		getRecentReviews(id, 5),
-		ClinicService.find({ providerId: id, active: { $ne: false } }).sort({ displayName: 1 }).lean()
+		['veterinaria', 'paseador', 'cuidador'].includes(user.providerType)
+			? (async () => {
+					let list = await ClinicService.find({ providerId: id, active: true })
+						.sort({ displayName: 1 })
+						.select('displayName kind slotDurationMinutes priceClp currency')
+						.lean();
+					if (list.length === 0 && user.providerType === 'veterinaria') {
+						const def = await ensureDefaultClinicService(id);
+						const o = def.toObject ? def.toObject() : def;
+						list = [
+							{
+								_id: o._id,
+								displayName: o.displayName,
+								kind: o.kind,
+								slotDurationMinutes: o.slotDurationMinutes,
+								priceClp: o.priceClp,
+								currency: o.currency
+							}
+						];
+					}
+					return list.map((c) => ({
+						id: c._id,
+						displayName: c.displayName,
+						kind: c.kind,
+						slotDurationMinutes: c.slotDurationMinutes,
+						...(user.providerType === 'veterinaria'
+							? {}
+							: { priceClp: c.priceClp, currency: c.currency || 'CLP' })
+					}));
+				})()
+			: Promise.resolve([])
 	]);
 	const slug = user.providerProfile?.publicSlug || null;
 	const profilePath =
 		slug && user.providerType ? `/api/proveedores/perfil/${user.providerType}/${slug}` : null;
 	const seoPath = slug && user.providerType ? `/${user.providerType}/${slug}` : null;
-
+	const establishmentName = `${user.name || ''} ${user.lastName || ''}`.trim();
 	return {
 		id,
 		name: user.name,
@@ -97,16 +123,14 @@ async function buildPublicProveedorResponse(user) {
 		profilePath,
 		seoPath,
 		perfil: toPublicProviderProfile(user.providerProfile),
+		...(clinicServiceDocs.length > 0 ? { clinicServices: clinicServiceDocs } : {}),
 		ratingSummary: summary,
-		reviewsRecent: formatReviewsForPublic(recent),
-		clinicServices: clinicRows.map(mapClinicServicePublic)
+		reviewsRecent: formatReviewsForPublic(recent, { establishmentName })
 	};
 }
 
 function assertProviderVisiblePublic(user) {
-	if (!user || !isProveedorAprobado(user)) {
-		return false;
-	}
+	if (!isApprovedProviderUserDoc(user)) return false;
 	if (user.providerProfile && user.providerProfile.isPublished === false) {
 		return false;
 	}
@@ -135,7 +159,7 @@ async function getProviderPublicProfile(req, res, next) {
 			return res.status(400).json({ message: 'Id de proveedor inválido' });
 		}
 		const user = await User.findById(id).select(
-			'name lastName phone profileImage providerType role status providerProfile'
+			'name lastName phone profileImage providerType role roles status providerProfile'
 		);
 		if (!assertProviderVisiblePublic(user)) {
 			return res.status(404).json({ message: 'Proveedor no encontrado' });
@@ -162,12 +186,12 @@ async function getProviderPublicProfileBySlug(req, res, next) {
 		}
 
 		const user = await User.findOne({
-			role: 'proveedor',
 			status: 'aprobado',
 			providerType: tipo,
 			'providerProfile.publicSlug': slug,
-			'providerProfile.isPublished': { $ne: false }
-		}).select('name lastName phone profileImage providerType role status providerProfile');
+			'providerProfile.isPublished': { $ne: false },
+			$or: [{ role: 'proveedor' }, { roles: 'proveedor' }]
+		}).select('name lastName phone profileImage providerType role status providerProfile roles');
 
 		if (!user) {
 			return res.status(404).json({ message: 'Proveedor no encontrado' });
@@ -184,9 +208,9 @@ const WEEK_DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'satu
 
 function buildProviderFilter(q) {
 	const filter = {
-		role: 'proveedor',
 		status: 'aprobado',
-		'providerProfile.isPublished': { $ne: false }
+		'providerProfile.isPublished': { $ne: false },
+		$and: [{ $or: [{ role: 'proveedor' }, { roles: 'proveedor' }] }]
 	};
 
 	if (q.tipo !== undefined && String(q.tipo).trim()) {
@@ -205,11 +229,13 @@ function buildProviderFilter(q) {
 	if (q.ciudad !== undefined && String(q.ciudad).trim()) {
 		const esc = String(q.ciudad).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 		const re = new RegExp(esc, 'i');
-		filter.$or = [
-			{ 'providerProfile.address.city': re },
-			{ 'providerProfile.address.commune': re },
-			{ 'providerProfile.serviceCommunes': re }
-		];
+		filter.$and.push({
+			$or: [
+				{ 'providerProfile.address.city': re },
+				{ 'providerProfile.address.commune': re },
+				{ 'providerProfile.serviceCommunes': re }
+			]
+		});
 	}
 
 	const amountCond = {};
@@ -233,6 +259,12 @@ function buildProviderFilter(q) {
 			});
 		}
 		filter['providerProfile.operationalStatus'] = estadoOperacion;
+	}
+
+	// Filtro: clínicas 24/7 (solo veterinarias). Se basa en providerProfile.schedule comenzando con "24/7".
+	if (q.open24 !== undefined && String(q.open24).trim() !== '' && String(q.open24) !== '0') {
+		filter.providerType = 'veterinaria';
+		filter['providerProfile.schedule'] = /^24\/7/i;
 	}
 
 	return filter;
@@ -342,7 +374,10 @@ async function listApprovedProviders(req, res, next) {
 		const limiteRaw = parseInt(req.query.limite, 10) || 10;
 		const limite = Math.min(100, Math.max(1, limiteRaw));
 
-		const filter = { role: 'proveedor', status: 'aprobado' };
+		const filter = {
+			status: 'aprobado',
+			$and: [{ $or: [{ role: 'proveedor' }, { roles: 'proveedor' }] }]
+		};
 		if (tipo !== undefined && String(tipo).trim()) {
 			if (!PROVIDER_KINDS.includes(String(tipo).trim())) {
 				return res.status(400).json({ message: 'tipo debe ser veterinaria, paseador o cuidador' });
@@ -352,10 +387,9 @@ async function listApprovedProviders(req, res, next) {
 		if (ciudad !== undefined && String(ciudad).trim()) {
 			const esc = String(ciudad).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 			const re = new RegExp(esc, 'i');
-			filter.$or = [
-				{ 'providerProfile.address.city': re },
-				{ 'providerProfile.address.commune': re }
-			];
+			filter.$and.push({
+				$or: [{ 'providerProfile.address.city': re }, { 'providerProfile.address.commune': re }]
+			});
 		}
 
 		const skip = (pagina - 1) * limite;
@@ -609,37 +643,35 @@ async function updateMyProviderProfile(req, res, next) {
 			}
 			$set['providerProfile.operationalStatus'] = operationalStatus;
 		}
-
 		if (body.agendaSlotStart !== undefined || body.agendaSlotEnd !== undefined) {
-			const existingAgenda = await User.findById(req.user.id)
-				.select('providerType providerProfile.agendaSlotStart providerProfile.agendaSlotEnd')
-				.lean();
-			if (!existingAgenda || existingAgenda.providerType !== 'veterinaria') {
-				return res.status(400).json({
-					message:
-						'agendaSlotStart y agendaSlotEnd solo aplican a cuentas tipo veterinaria. Usa Mi perfil de proveedor.'
-				});
+			const who = await User.findById(req.user.id).select('providerType').lean();
+			if (!who || who.providerType !== 'veterinaria') {
+				return res.status(400).json({ message: 'agendaSlotStart/End solo aplican a clínicas veterinarias' });
 			}
-			const prevS = existingAgenda.providerProfile?.agendaSlotStart;
-			const prevE = existingAgenda.providerProfile?.agendaSlotEnd;
-			const rawS =
-				body.agendaSlotStart !== undefined ? body.agendaSlotStart : prevS != null ? prevS : '09:00';
-			const rawE =
-				body.agendaSlotEnd !== undefined ? body.agendaSlotEnd : prevE != null ? prevE : '18:00';
-			const st = parseWallHmStrict(rawS);
-			const en = parseWallHmStrict(rawE);
-			if (!st || !en) {
-				return res.status(400).json({
-					message: 'agendaSlotStart y agendaSlotEnd deben ser horas validas en formato HH:MM (24 h).'
-				});
+			const s = String(body.agendaSlotStart != null ? body.agendaSlotStart : '').trim();
+			const e = String(body.agendaSlotEnd != null ? body.agendaSlotEnd : '').trim();
+			if (!s || !e) {
+				return res
+					.status(400)
+					.json({ message: 'Indica inicio y fin de agenda (HH:MM) o deja de enviar esos campos' });
 			}
-			if (wallMinutesFromHm(en) <= wallMinutesFromHm(st)) {
-				return res.status(400).json({
-					message: 'La hora de cierre debe ser posterior a la de apertura el mismo dia civil.'
-				});
+			const sm = parseHHMM(s);
+			const em = parseHHMM(e);
+			if (sm == null || em == null) {
+				return res
+					.status(400)
+					.json({ message: 'agendaSlotStart y agendaSlotEnd deben ser HH:MM (p. ej. 10:00, 12:00)' });
 			}
-			$set['providerProfile.agendaSlotStart'] = st;
-			$set['providerProfile.agendaSlotEnd'] = en;
+			if (em <= sm) {
+				return res.status(400).json({ message: 'agendaSlotEnd debe ser mayor que agendaSlotStart' });
+			}
+			if (sm % 30 !== 0 || em % 30 !== 0) {
+				return res
+					.status(400)
+					.json({ message: 'Usa solo minutos :00 o :30 (bloques de 30 minutos)' });
+			}
+			$set['providerProfile.agendaSlotStart'] = s;
+			$set['providerProfile.agendaSlotEnd'] = e;
 		}
 
 		if (body.address !== undefined) {
@@ -803,8 +835,12 @@ async function updateMyProviderProfile(req, res, next) {
 		if (Object.keys($set).length) updateOps.$set = $set;
 		if (Object.keys($unset).length) updateOps.$unset = $unset;
 
+		// Misma lógica que authorizeRoles: cuenta dual (role dueno + roles proveedor) debe poder actualizar.
 		const user = await User.findOneAndUpdate(
-			{ _id: req.user.id, role: 'proveedor' },
+			{
+				_id: req.user.id,
+				$or: [{ role: 'proveedor' }, { roles: 'proveedor' }]
+			},
 			updateOps,
 			{ new: true, runValidators: true, context: 'query' }
 		).select('-password -passwordResetToken -passwordResetExpires');
@@ -843,9 +879,9 @@ async function requestWalkerService(req, res, next) {
 		}
 
 		const prov = await User.findById(providerId).select(
-			'role status providerType providerProfile.isPublished'
+			'role roles status providerType providerProfile.isPublished'
 		);
-		if (!prov || !isProveedorAprobado(prov)) {
+		if (!prov || !isApprovedProviderUserDoc(prov)) {
 			return res.status(404).json({ message: 'Proveedor no encontrado' });
 		}
 		if (prov.providerType !== 'paseador' && prov.providerType !== 'cuidador') {

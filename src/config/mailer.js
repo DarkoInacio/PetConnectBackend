@@ -13,7 +13,12 @@ function getTransporter() {
 	const pass = process.env.MAIL_PASS;
 
 	if (!host || !user || !pass) {
-		console.warn('Advertencia: configuración de correo incompleta. Revisar variables MAIL_*');
+		const error = new Error(
+			'Configuración de correo incompleta. Define MAIL_HOST, MAIL_PORT, MAIL_USER y MAIL_PASS en el backend.'
+		);
+		error.status = 500;
+		error.code = 'MAIL_CONFIG_MISSING';
+		throw error;
 	}
 
 	transporter = nodemailer.createTransport({

@@ -3,78 +3,12 @@
 const mongoose = require('mongoose');
 const User = require('../models/User');
 const Review = require('../models/Review');
-const {
-	getRatingSummary,
-	getRecentReviews,
-	syncProviderRatingToUser,
-	formatReviewsForPublic
-} = require('../services/providerRating.service');
-const { isProveedorAprobado } = require('../utils/providerEligibility');
+const { activeReviewMatch, getRatingSummary, formatReviewsForPublic } = require('../services/providerRating.service');
+const { providerDisplayName } = require('../utils/notifyReview');
 
 /**
- * POST /api/proveedores/:providerId/reviews
- */
-async function createProviderReview(req, res, next) {
-	try {
-		const { providerId } = req.params;
-		if (!mongoose.isValidObjectId(providerId)) {
-			return res.status(400).json({ message: 'Id de proveedor inválido' });
-		}
-
-		const { rating, comment } = req.body || {};
-		const r = Number(rating);
-		if (!Number.isInteger(r) || r < 1 || r > 5) {
-			return res.status(400).json({ message: 'rating debe ser un entero entre 1 y 5' });
-		}
-
-		const text = comment != null ? String(comment).trim() : '';
-		if (text.length > 2000) {
-			return res.status(400).json({ message: 'comment no puede superar 2000 caracteres' });
-		}
-
-		if (String(req.user.id) === String(providerId)) {
-			return res.status(400).json({ message: 'No puede reseñar su propio perfil de proveedor' });
-		}
-
-		const prov = await User.findById(providerId).select('role status providerProfile.isPublished');
-		if (!prov || !isProveedorAprobado(prov)) {
-			return res.status(404).json({ message: 'Proveedor no encontrado' });
-		}
-		if (prov.providerProfile && prov.providerProfile.isPublished === false) {
-			return res.status(404).json({ message: 'Proveedor no encontrado' });
-		}
-
-		try {
-			await Review.create({
-				providerId,
-				ownerId: req.user.id,
-				rating: r,
-				comment: text
-			});
-		} catch (err) {
-			if (err.code === 11000) {
-				return res.status(409).json({ message: 'Ya existe una reseña suya para este proveedor' });
-			}
-			throw err;
-		}
-
-		await syncProviderRatingToUser(providerId);
-
-		const summary = await getRatingSummary(providerId);
-		const recent = await getRecentReviews(providerId, 5);
-
-		return res.status(201).json({
-			message: 'Reseña registrada',
-			ratingSummary: summary,
-			reviewsRecent: formatReviewsForPublic(recent)
-		});
-	} catch (err) {
-		next(err);
-	}
-}
-
-/**
- * GET /api/proveedores/:providerId/reviews?pagina=1&limite=10
+ * GET /api/proveedores/:providerId/reviews
+ * Query: pagina, limite (default 5), orden=reciente|mayor|menor
  */
 async function listProviderReviews(req, res, next) {
 	try {
@@ -83,8 +17,14 @@ async function listProviderReviews(req, res, next) {
 			return res.status(400).json({ message: 'Id de proveedor inválido' });
 		}
 
-		const prov = await User.findById(providerId).select('role status providerProfile.isPublished');
-		if (!prov || !isProveedorAprobado(prov)) {
+		const prov = await User.findById(providerId).select(
+			'role roles status providerProfile.isPublished name lastName'
+		);
+		const isApprovedProv =
+			prov &&
+			prov.status === 'aprobado' &&
+			(prov.role === 'proveedor' || (Array.isArray(prov.roles) && prov.roles.includes('proveedor')));
+		if (!isApprovedProv) {
 			return res.status(404).json({ message: 'Proveedor no encontrado' });
 		}
 		if (prov.providerProfile && prov.providerProfile.isPublished === false) {
@@ -92,34 +32,94 @@ async function listProviderReviews(req, res, next) {
 		}
 
 		const pagina = Math.max(1, parseInt(req.query.pagina, 10) || 1);
-		const limiteRaw = parseInt(req.query.limite, 10) || 10;
+		const limiteRaw = parseInt(req.query.limite, 10) || 5;
 		const limite = Math.min(50, Math.max(1, limiteRaw));
 		const skip = (pagina - 1) * limite;
-
+		const orden = String(req.query.orden || 'reciente').toLowerCase();
+		const establishmentName = providerDisplayName(prov);
+		const match = activeReviewMatch(providerId);
+		let sort = { createdAt: -1 };
+		if (orden === 'mayor' || orden === 'alta' || orden === 'rating_mayor') {
+			sort = { rating: -1, createdAt: -1 };
+		} else if (orden === 'menor' || orden === 'baja' || orden === 'rating_menor') {
+			sort = { rating: 1, createdAt: -1 };
+		}
 		const [total, docs, summary] = await Promise.all([
-			Review.countDocuments({ providerId }),
-			Review.find({ providerId })
-				.sort({ createdAt: -1 })
-				.skip(skip)
-				.limit(limite)
-				.populate('ownerId', 'name lastName')
-				.lean(),
+			Review.countDocuments(match),
+			Review.find(match).sort(sort).skip(skip).limit(limite).populate('ownerId', 'name lastName').lean(),
 			getRatingSummary(providerId)
 		]);
 
 		return res.status(200).json({
 			ratingSummary: summary,
+			basedOnLabel: `Basado en ${summary.count} reseña${summary.count === 1 ? '' : 's'}`,
 			total,
 			pagina,
 			limite,
-			reviews: formatReviewsForPublic(docs)
+			orden: orden,
+			empty: total === 0,
+			emptyHint: total === 0 ? 'Sé el primero en compartir tu opinión sobre este proveedor' : null,
+			reviews: formatReviewsForPublic(docs, { establishmentName })
 		});
 	} catch (err) {
 		next(err);
 	}
 }
 
+/**
+ * GET /api/provider/reviews?prioridad=pendientes|recientes
+ * Reseñas recibidas (cliente → proveedor) de la clínica / proveedor autenticado.
+ */
+async function listProviderOwnReviews(req, res, next) {
+	try {
+		const providerId = String(req.user.id);
+		if (!mongoose.isValidObjectId(providerId)) {
+			return res.status(400).json({ message: 'Sesión de proveedor inválida' });
+		}
+
+		const match = matchClientToProviderOnProvider(providerId);
+		const sort =
+			(req.query.prioridad && String(req.query.prioridad).toLowerCase()) === 'recientes'
+				? { createdAt: -1 }
+				: { createdAt: -1 };
+		/* "pendientes" hoy = más reciente primero (sin capa de respuestas aún) */
+		const limite = 200;
+		const docs = await Review.find(match)
+			.sort(sort)
+			.limit(limite)
+			.populate('ownerId', 'name lastName')
+			.lean();
+
+		const reviews = docs.map((d) => {
+			const text = getObservationText(d);
+			return {
+				_id: d._id,
+				rating: d.rating,
+				comment: text,
+				observation: text,
+				createdAt: d.createdAt,
+				ownerId: d.ownerId
+					? { _id: d.ownerId._id || d.ownerId, name: d.ownerId.name, lastName: d.ownerId.lastName }
+					: null,
+				providerReply: null,
+				estadoRespuesta: 'sin_responder'
+			};
+		});
+
+		return res.status(200).json({ reviews, total: reviews.length });
+	} catch (err) {
+		next(err);
+	}
+}
+
+function notImplementedProviderReviewReply(_req, res) {
+	return res
+		.status(501)
+		.json({ message: 'Responder a reseñas desde el panel aún no está activo en el servidor.' });
+}
+
 module.exports = {
-	createProviderReview,
-	listProviderReviews
+	listProviderReviews,
+	listProviderOwnReviews,
+	notImplementedProviderReviewReply
 };

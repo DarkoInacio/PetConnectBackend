@@ -9,7 +9,10 @@ async function listPendingProviders(req, res, next) {
 		const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 20));
 		const skip = (page - 1) * limit;
 
-		const filter = { role: 'proveedor', status: 'en_revision' };
+		const filter = {
+			status: 'en_revision',
+			$or: [{ role: 'proveedor' }, { roles: { $in: ['proveedor'] } }]
+		};
 		const [items, total] = await Promise.all([
 			User.find(filter)
 				.sort({ createdAt: 1 })
@@ -38,7 +41,9 @@ async function approveProvider(req, res, next) {
 		if (!user) {
 			return res.status(404).json({ message: 'Usuario no encontrado' });
 		}
-		if (user.role !== 'proveedor') {
+		const hasProvider =
+			user.role === 'proveedor' || (Array.isArray(user.roles) && user.roles.includes('proveedor'));
+		if (!hasProvider) {
 			return res.status(400).json({ message: 'El usuario no es proveedor' });
 		}
 		if (user.status !== 'en_revision') {
@@ -80,27 +85,50 @@ async function rejectProvider(req, res, next) {
 		if (!user) {
 			return res.status(404).json({ message: 'Usuario no encontrado' });
 		}
-		if (user.role !== 'proveedor') {
+		const hasProvider =
+			user.role === 'proveedor' || (Array.isArray(user.roles) && user.roles.includes('proveedor'));
+		if (!hasProvider) {
 			return res.status(400).json({ message: 'El usuario no es proveedor' });
 		}
 		if (user.status !== 'en_revision') {
 			return res.status(400).json({ message: 'El proveedor no está en revisión' });
 		}
 
-		user.status = 'rechazado';
-		if (!user.providerProfile) {
-			user.providerProfile = {};
+		const eff = user.roles && user.roles.length > 0 ? user.roles : [user.role];
+		const isDual = eff.includes('dueno') && eff.includes('proveedor');
+		const providerTypeLabel = user.providerType;
+
+		if (isDual) {
+			user.roles = ['dueno'];
+			user.role = 'dueno';
+			user.status = 'activo';
+			user.providerType = null;
+			user.providerProfile = {
+				rejectionReason: reason,
+				reviewedAt: new Date(),
+				reviewedBy: req.user.id
+			};
+		} else {
+			user.status = 'rechazado';
+			if (!user.providerProfile) {
+				user.providerProfile = {};
+			}
+			user.providerProfile.rejectionReason = reason;
+			user.providerProfile.reviewedAt = new Date();
+			user.providerProfile.reviewedBy = req.user.id;
 		}
-		user.providerProfile.rejectionReason = reason;
-		user.providerProfile.reviewedAt = new Date();
-		user.providerProfile.reviewedBy = req.user.id;
 		await user.save();
 
 		try {
+			const bodyDual = isDual
+				? `<p>Tu cuenta de <strong>dueño</strong> sigue activa. Puedes volver a enviar una solicitud más adelante.</p>`
+				: '';
 			await sendEmail({
 				to: user.email,
 				subject: 'PetConnect: actualización sobre tu solicitud de proveedor',
-				html: `<p>Hola ${user.name},</p><p>Lamentamos informarte que tu solicitud como <strong>${user.providerType}</strong> no ha sido aprobada.</p><p><strong>Motivo:</strong></p><p>${escapeHtml(reason)}</p><p>Si crees que es un error, contacta a soporte.</p><p>PetConnect</p>`
+				html: `<p>Hola ${user.name},</p><p>Lamentamos informarte que tu solicitud como <strong>${providerTypeLabel || 'proveedor'}</strong> no ha sido aprobada.</p><p><strong>Motivo:</strong></p><p>${escapeHtml(
+					reason
+				)}</p>${bodyDual}<p>Si crees que es un error, contacta a soporte.</p><p>PetConnect</p>`
 			});
 		} catch (err) {
 			console.error('rejectProvider email:', err.message);

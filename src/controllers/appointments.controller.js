@@ -6,7 +6,6 @@ const Appointment = require('../models/Appointment');
 const AvailabilitySlot = require('../models/AvailabilitySlot');
 const User = require('../models/User');
 const Pet = require('../models/Pet');
-const Cita = require('../models/Cita');
 const { notifyProveedorAppointmentCancelada } = require('../utils/notifyAppointmentProveedor');
 const { getAgendaZone } = require('../utils/vetAgendaSlots');
 const ClinicService = require('../models/ClinicService');
@@ -544,12 +543,6 @@ async function cancelProviderAppointment(req, res, next) {
 					status: 'available'
 				},
 				{ upsert: true }
-			);
-		}
-
-		if (bookingSrcProv === 'legacy_cita' && appointment.legacyCitaId) {
-			await Cita.updateOne({ _id: appointment.legacyCitaId }, { $set: { estado: 'cancelada' } }).catch(
-				(e) => console.error('[HU-14] sync cancel provider Cita:', e.message)
 			);
 		}
 

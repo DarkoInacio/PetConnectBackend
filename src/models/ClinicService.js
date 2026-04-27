@@ -2,6 +2,10 @@
 
 const mongoose = require('mongoose');
 
+/**
+ * Línea de atención dentro de una clínica (mismo User proveedor veterinario).
+ * La agenda genera franjas por `slotDurationMinutes` y por cada servicio activo.
+ */
 const clinicServiceSchema = new mongoose.Schema(
 	{
 		providerId: {
@@ -12,21 +16,31 @@ const clinicServiceSchema = new mongoose.Schema(
 		},
 		displayName: {
 			type: String,
-			required: true,
 			trim: true,
-			maxlength: 120
+			maxlength: 120,
+			required: true
 		},
+		kind: {
+			type: String,
+			trim: true,
+			maxlength: 80,
+			default: 'consulta'
+		},
+		/** Duración de cada franja y paso al generar (15–180). Veterinaria. */
 		slotDurationMinutes: {
 			type: Number,
-			required: true,
+			default: 30,
 			min: 15,
-			max: 180,
-			default: 30
+			max: 180
 		},
+		/**
+		 * Referencia o tarifa pública. En veterinaria suele ocultarse en la UI; paseo/cuidado reforzar.
+		 * null = sin precio mostrable / a convenir
+		 */
 		priceClp: {
 			type: Number,
 			min: 0,
-			default: undefined
+			default: null
 		},
 		currency: {
 			type: String,

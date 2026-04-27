@@ -7,6 +7,15 @@ const USER_ROLES = ['dueno', 'proveedor', 'admin'];
 const PROVIDER_STATUSES = ['en_revision', 'aprobado', 'rechazado'];
 const PROVIDER_KINDS = ['veterinaria', 'paseador', 'cuidador'];
 
+function normalizeRoleValue(value) {
+	if (typeof value !== 'string') return value;
+	return value
+		.normalize('NFD')
+		.replace(/[\u0300-\u036f]/g, '')
+		.toLowerCase()
+		.trim();
+}
+
 const addressSchema = new mongoose.Schema(
 	{
 		street: { type: String, trim: true },
@@ -110,12 +119,12 @@ const providerProfileSchema = new mongoose.Schema(
 			lowercase: true,
 			default: undefined
 		},
+		// Ventana de bloques de agenda (citas), hora "de pared" en la zona del servidor (p. ej. America/Santiago)
+		agendaSlotStart: { type: String, trim: true, default: '09:00' },
+		agendaSlotEnd: { type: String, trim: true, default: '18:00' },
 		rejectionReason: { type: String },
 		reviewedAt: { type: Date },
-		reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-		/** Recepción / tramos de clínica (hora Chile, HH:MM). Usados al generar disponibilidad. */
-		agendaSlotStart: { type: String, trim: true },
-		agendaSlotEnd: { type: String, trim: true }
+		reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
 	},
 	{ _id: false }
 );
@@ -149,7 +158,18 @@ const userSchema = new mongoose.Schema(
 			type: String,
 			enum: USER_ROLES,
 			default: 'dueno',
+			set: normalizeRoleValue,
 			index: true
+		},
+		/** Mismo login con varias capacidades; si falta, se asume [role] en el middleware. */
+		roles: {
+			type: [
+				{
+					type: String,
+					enum: USER_ROLES
+				}
+			],
+			default: undefined
 		},
 		providerType: {
 			type: String,
@@ -181,7 +201,12 @@ const userSchema = new mongoose.Schema(
 			}
 		},
 		passwordResetToken: String,
-		passwordResetExpires: Date
+		passwordResetExpires: Date,
+		/** Solo dueños: bloqueo de nuevas reseñas por moderación */
+		reviewWriteSuspended: {
+			type: Boolean,
+			default: false
+		}
 	},
 	{
 		timestamps: true
@@ -192,6 +217,11 @@ userSchema.pre('save', async function (next) {
 	if (!this.isModified('password')) return next();
 	const salt = await bcrypt.genSalt(10);
 	this.password = await bcrypt.hash(this.password, salt);
+	next();
+});
+
+userSchema.pre('validate', function (next) {
+	this.role = normalizeRoleValue(this.role);
 	next();
 });
 
