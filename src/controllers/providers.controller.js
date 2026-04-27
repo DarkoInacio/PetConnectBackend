@@ -2,6 +2,7 @@
 
 const mongoose = require('mongoose');
 const User = require('../models/User');
+const ClinicService = require('../models/ClinicService');
 const { distanceKm } = require('../utils/haversine');
 const { geocodeAddressNominatim } = require('../utils/geocodeNominatim');
 const {
@@ -14,6 +15,8 @@ const {
 	validatePaseadorCuidadorForPublish
 } = require('../utils/walkerProfileValidation');
 const Appointment = require('../models/Appointment');
+const { isProveedorAprobado } = require('../utils/providerEligibility');
+const { parseWallHmStrict, wallMinutesFromHm } = require('../utils/chileCalendar');
 
 const PRIVATE_PROFILE_KEYS = new Set(['rejectionReason', 'reviewedAt', 'reviewedBy']);
 const DEFAULT_MAP_CENTER = {
@@ -59,9 +62,25 @@ function assertValidPublicSlug(slug) {
 	return s;
 }
 
+function mapClinicServicePublic(row) {
+	return {
+		id: row._id,
+		_id: row._id,
+		displayName: row.displayName,
+		slotDurationMinutes: row.slotDurationMinutes,
+		priceClp: row.priceClp != null ? row.priceClp : undefined,
+		currency: row.currency || 'CLP',
+		active: row.active !== false
+	};
+}
+
 async function buildPublicProveedorResponse(user) {
 	const id = user._id;
-	const [summary, recent] = await Promise.all([getRatingSummary(id), getRecentReviews(id, 5)]);
+	const [summary, recent, clinicRows] = await Promise.all([
+		getRatingSummary(id),
+		getRecentReviews(id, 5),
+		ClinicService.find({ providerId: id, active: { $ne: false } }).sort({ displayName: 1 }).lean()
+	]);
 	const slug = user.providerProfile?.publicSlug || null;
 	const profilePath =
 		slug && user.providerType ? `/api/proveedores/perfil/${user.providerType}/${slug}` : null;
@@ -79,12 +98,13 @@ async function buildPublicProveedorResponse(user) {
 		seoPath,
 		perfil: toPublicProviderProfile(user.providerProfile),
 		ratingSummary: summary,
-		reviewsRecent: formatReviewsForPublic(recent)
+		reviewsRecent: formatReviewsForPublic(recent),
+		clinicServices: clinicRows.map(mapClinicServicePublic)
 	};
 }
 
 function assertProviderVisiblePublic(user) {
-	if (!user || user.role !== 'proveedor' || user.status !== 'aprobado') {
+	if (!user || !isProveedorAprobado(user)) {
 		return false;
 	}
 	if (user.providerProfile && user.providerProfile.isPublished === false) {
@@ -590,6 +610,38 @@ async function updateMyProviderProfile(req, res, next) {
 			$set['providerProfile.operationalStatus'] = operationalStatus;
 		}
 
+		if (body.agendaSlotStart !== undefined || body.agendaSlotEnd !== undefined) {
+			const existingAgenda = await User.findById(req.user.id)
+				.select('providerType providerProfile.agendaSlotStart providerProfile.agendaSlotEnd')
+				.lean();
+			if (!existingAgenda || existingAgenda.providerType !== 'veterinaria') {
+				return res.status(400).json({
+					message:
+						'agendaSlotStart y agendaSlotEnd solo aplican a cuentas tipo veterinaria. Usa Mi perfil de proveedor.'
+				});
+			}
+			const prevS = existingAgenda.providerProfile?.agendaSlotStart;
+			const prevE = existingAgenda.providerProfile?.agendaSlotEnd;
+			const rawS =
+				body.agendaSlotStart !== undefined ? body.agendaSlotStart : prevS != null ? prevS : '09:00';
+			const rawE =
+				body.agendaSlotEnd !== undefined ? body.agendaSlotEnd : prevE != null ? prevE : '18:00';
+			const st = parseWallHmStrict(rawS);
+			const en = parseWallHmStrict(rawE);
+			if (!st || !en) {
+				return res.status(400).json({
+					message: 'agendaSlotStart y agendaSlotEnd deben ser horas validas en formato HH:MM (24 h).'
+				});
+			}
+			if (wallMinutesFromHm(en) <= wallMinutesFromHm(st)) {
+				return res.status(400).json({
+					message: 'La hora de cierre debe ser posterior a la de apertura el mismo dia civil.'
+				});
+			}
+			$set['providerProfile.agendaSlotStart'] = st;
+			$set['providerProfile.agendaSlotEnd'] = en;
+		}
+
 		if (body.address !== undefined) {
 			if (body.address === null || typeof body.address !== 'object') {
 				return res.status(400).json({ message: 'address debe ser un objeto' });
@@ -793,7 +845,7 @@ async function requestWalkerService(req, res, next) {
 		const prov = await User.findById(providerId).select(
 			'role status providerType providerProfile.isPublished'
 		);
-		if (!prov || prov.role !== 'proveedor' || prov.status !== 'aprobado') {
+		if (!prov || !isProveedorAprobado(prov)) {
 			return res.status(404).json({ message: 'Proveedor no encontrado' });
 		}
 		if (prov.providerType !== 'paseador' && prov.providerType !== 'cuidador') {

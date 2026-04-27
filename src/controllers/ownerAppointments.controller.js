@@ -9,6 +9,7 @@ const {
 	notifyProviderAppointmentCanceled,
 	notifyProviderAppointmentRescheduled
 } = require('../utils/notifyProviderAppointment');
+const { isProveedorAprobado } = require('../utils/providerEligibility');
 
 function mapCitaEstadoToAppointmentStatus(estado) {
 	switch (estado) {
@@ -52,7 +53,7 @@ async function createOwnerAppointment(req, res, next) {
 		}
 
 		const prov = await User.findById(proveedorId).select('role status name lastName email');
-		if (!prov || prov.role !== 'proveedor' || prov.status !== 'aprobado') {
+		if (!prov || !isProveedorAprobado(prov)) {
 			return res.status(400).json({ message: 'El proveedor no existe o no está aprobado' });
 		}
 

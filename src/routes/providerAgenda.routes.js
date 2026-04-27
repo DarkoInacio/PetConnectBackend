@@ -15,7 +15,7 @@ const {
 
 router.use(auth, authorizeRoles('proveedor'));
 
-// Genera bloques de agenda de 09:00 a 18:00 cada 30 minutos
+// Genera bloques según horario de recepción del perfil (Mi perfil), tramos de 30 min en hora Chile
 router.post('/generate', generateAgendaSlots);
 
 // Lista bloques del proveedor autenticado

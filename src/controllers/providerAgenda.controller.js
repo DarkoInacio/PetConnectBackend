@@ -1,80 +1,50 @@
 'use strict';
 
+const mongoose = require('mongoose');
 const AvailabilitySlot = require('../models/AvailabilitySlot');
 const User = require('../models/User');
+const { isProveedorAprobado, normalizeAccountStatus } = require('../utils/providerEligibility');
+const {
+	todayYmdChile,
+	addCalendarDaysYmd,
+	diffInclusiveDaysYmd,
+	buildDaySlotsChileWall,
+	chileWallCivilDayBounds,
+	normalizeWallHm,
+	wallMinutesFromHm,
+	filterSlotsByVetAgendaWindow
+} = require('../utils/chileCalendar');
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-function parseYmdDate(value) {
-	if (!DATE_RE.test(value)) return null;
-	const [year, month, day] = value.split('-').map(Number);
-	const date = new Date(Date.UTC(year, month - 1, day));
-	if (
-		date.getUTCFullYear() !== year ||
-		date.getUTCMonth() !== month - 1 ||
-		date.getUTCDate() !== day
-	) {
-		return null;
-	}
-	return date;
-}
-
-function formatYmdUtc(date) {
-	const y = date.getUTCFullYear();
-	const m = String(date.getUTCMonth() + 1).padStart(2, '0');
-	const d = String(date.getUTCDate()).padStart(2, '0');
-	return `${y}-${m}-${d}`;
-}
-
-function addDaysUtc(date, days) {
-	const copy = new Date(date.getTime());
-	copy.setUTCDate(copy.getUTCDate() + days);
-	return copy;
-}
-
-function buildDaySlotsUtc(dayDateUtc, providerId) {
-	const slots = [];
-	for (let minutes = 9 * 60; minutes < 18 * 60; minutes += 30) {
-		const startHour = Math.floor(minutes / 60);
-		const startMinute = minutes % 60;
-		const endMinutes = minutes + 30;
-		const endHour = Math.floor(endMinutes / 60);
-		const endMinute = endMinutes % 60;
-
-		const startAt = new Date(
-			Date.UTC(
-				dayDateUtc.getUTCFullYear(),
-				dayDateUtc.getUTCMonth(),
-				dayDateUtc.getUTCDate(),
-				startHour,
-				startMinute,
-				0,
-				0
-			)
-		);
-		const endAt = new Date(
-			Date.UTC(
-				dayDateUtc.getUTCFullYear(),
-				dayDateUtc.getUTCMonth(),
-				dayDateUtc.getUTCDate(),
-				endHour,
-				endMinute,
-				0,
-				0
-			)
-		);
-		slots.push({ providerId, startAt, endAt, status: 'available' });
-	}
-	return slots;
+function providerIdInQuery(userId) {
+	const s = String(userId);
+	return { $in: [new mongoose.Types.ObjectId(s), s] };
 }
 
 async function ensureApprovedProvider(userId) {
-	const provider = await User.findById(userId).select('_id role status');
+	const provider = await User.findById(userId).select('_id role status providerType');
 	if (!provider || provider.role !== 'proveedor') {
-		return { ok: false, code: 403, message: 'Solo proveedores pueden gestionar agenda' };
+		return {
+			ok: false,
+			code: 403,
+			message:
+				'Solo cuentas con rol de proveedor pueden gestionar la agenda. Si usas la misma cuenta como dueño y como clínica, inicia sesión con el correo registrado como proveedor o pide a un administrador que verifique tu rol en la base de datos.'
+		};
 	}
-	if (provider.status !== 'aprobado') {
-		return { ok: false, code: 403, message: 'Tu perfil debe estar aprobado para publicar agenda' };
+	if (!isProveedorAprobado(provider)) {
+		const st = provider.status;
+		const norm = normalizeAccountStatus(st);
+		return {
+			ok: false,
+			code: 403,
+			message:
+				norm === 'en_revision'
+					? 'Tu perfil de proveedor sigue en revisión. Cuando un administrador lo apruebe, podrás publicar franjas en la agenda.'
+					: norm === 'rechazado'
+						? 'Tu solicitud de proveedor fue rechazada; no puedes publicar agenda.'
+						: `Tu perfil debe estar aprobado para publicar agenda. Estado actual en el sistema: "${st ?? 'sin estado'}". Si un administrador ya te aprobó, pide que revisen el campo status del usuario (debe ser exactamente aprobado) o vuelve a iniciar sesión tras la aprobación.`
+		};
 	}
 	return { ok: true };
 }
@@ -86,35 +56,48 @@ async function generateAgendaSlots(req, res, next) {
 			return res.status(providerCheck.code).json({ message: providerCheck.message });
 		}
 
-		const todayUtc = new Date();
-		const today = new Date(
-			Date.UTC(todayUtc.getUTCFullYear(), todayUtc.getUTCMonth(), todayUtc.getUTCDate())
-		);
-
-		const fromDateRaw = req.body.fromDate || formatYmdUtc(today);
+		const todayStr = todayYmdChile();
+		const fromDateRaw = req.body.fromDate || todayStr;
 		const toDateRaw = req.body.toDate || fromDateRaw;
 
-		const fromDate = parseYmdDate(fromDateRaw);
-		const toDate = parseYmdDate(toDateRaw);
-		if (!fromDate || !toDate) {
+		if (!DATE_RE.test(fromDateRaw) || !DATE_RE.test(toDateRaw)) {
 			return res.status(400).json({ message: 'Formato de fecha invalido. Usar YYYY-MM-DD' });
 		}
-		if (toDate < fromDate) {
+		if (fromDateRaw > toDateRaw) {
 			return res.status(400).json({ message: 'toDate debe ser mayor o igual a fromDate' });
 		}
-		if (fromDate < today) {
+		if (fromDateRaw < todayStr) {
 			return res.status(400).json({ message: 'No se pueden generar bloques en fechas pasadas' });
 		}
 
-		const days = Math.floor((toDate - fromDate) / (24 * 60 * 60 * 1000)) + 1;
-		if (days > 31) {
-			return res.status(400).json({ message: 'Solo se permite generar hasta 31 dias por solicitud' });
+		const days = diffInclusiveDaysYmd(fromDateRaw, toDateRaw);
+		// El panel pide «hoy + 8 semanas» (~57 días); 31 era demasiado bajo y devolvía 400 sin crear tramos.
+		if (days > 120) {
+			return res.status(400).json({ message: 'Solo se permite generar hasta 120 dias por solicitud' });
 		}
 
+		const providerRow = await User.findById(req.user.id)
+			.select('providerProfile.agendaSlotStart providerProfile.agendaSlotEnd')
+			.lean();
+		const pp = providerRow?.providerProfile || {};
+		const slotStartHm = normalizeWallHm(pp.agendaSlotStart, '09:00');
+		const slotEndHm = normalizeWallHm(pp.agendaSlotEnd, '18:00');
+		if (wallMinutesFromHm(slotEndHm) <= wallMinutesFromHm(slotStartHm)) {
+			return res.status(400).json({
+				message:
+					'Revisa en Mi perfil el horario de recepción (apertura y cierre): el cierre debe ser después de la apertura el mismo día.'
+			});
+		}
+
+		const providerOid = new mongoose.Types.ObjectId(String(req.user.id));
 		const operations = [];
 		for (let i = 0; i < days; i++) {
-			const day = addDaysUtc(fromDate, i);
-			const daySlots = buildDaySlotsUtc(day, req.user.id);
+			const ymd = addCalendarDaysYmd(fromDateRaw, i);
+			const daySlots = buildDaySlotsChileWall(ymd, providerOid, {
+				slotStart: slotStartHm,
+				slotEnd: slotEndHm,
+				slotStepMinutes: 30
+			});
 			for (const slot of daySlots) {
 				operations.push({
 					updateOne: {
@@ -153,8 +136,12 @@ async function listMySlots(req, res, next) {
 			return res.status(providerCheck.code).json({ message: providerCheck.message });
 		}
 
-		const query = { providerId: req.user.id };
+		const query = { providerId: providerIdInQuery(req.user.id) };
 		const { from, to, status } = req.query;
+		const onlyFuture = String(req.query.onlyFuture || '');
+		const fromYmd = req.query.fromYmd ? String(req.query.fromYmd) : '';
+		const toYmd = req.query.toYmd ? String(req.query.toYmd) : '';
+
 		if (status) {
 			if (!['available', 'blocked'].includes(status)) {
 				return res.status(400).json({ message: 'status invalido. Usar available o blocked' });
@@ -178,9 +165,27 @@ async function listMySlots(req, res, next) {
 				}
 				query.startAt.$lte = toDate;
 			}
+		} else if (DATE_RE.test(fromYmd) && DATE_RE.test(toYmd)) {
+			const a = chileWallCivilDayBounds(fromYmd).dayStart;
+			const b = chileWallCivilDayBounds(toYmd).dayEnd;
+			const now = new Date();
+			const lo =
+				onlyFuture === '1' || onlyFuture === 'true'
+					? new Date(Math.max(a.getTime(), now.getTime()))
+					: a;
+			query.startAt = { $gte: lo, $lte: b };
+		} else if (onlyFuture === '1' || onlyFuture === 'true') {
+			query.startAt = { $gte: new Date() };
 		}
 
-		const slots = await AvailabilitySlot.find(query).sort({ startAt: 1 });
+		let slots = await AvailabilitySlot.find(query).sort({ startAt: 1 }).lean();
+		const me = await User.findById(req.user.id)
+			.select('providerType providerProfile.agendaSlotStart providerProfile.agendaSlotEnd')
+			.lean();
+		if (String(me?.providerType) === 'veterinaria') {
+			const pp = me.providerProfile || {};
+			slots = filterSlotsByVetAgendaWindow(slots, pp.agendaSlotStart, pp.agendaSlotEnd);
+		}
 		return res.status(200).json({ slots });
 	} catch (error) {
 		next(error);
@@ -195,7 +200,7 @@ async function blockMySlot(req, res, next) {
 		}
 
 		const slot = await AvailabilitySlot.findOneAndUpdate(
-			{ _id: req.params.slotId, providerId: req.user.id, status: 'available' },
+			{ _id: req.params.slotId, providerId: providerIdInQuery(req.user.id), status: 'available' },
 			{ $set: { status: 'blocked' } },
 			{ new: true }
 		);
@@ -218,7 +223,7 @@ async function unblockMySlot(req, res, next) {
 		}
 
 		const slot = await AvailabilitySlot.findOneAndUpdate(
-			{ _id: req.params.slotId, providerId: req.user.id, status: 'blocked' },
+			{ _id: req.params.slotId, providerId: providerIdInQuery(req.user.id), status: 'blocked' },
 			{ $set: { status: 'available' } },
 			{ new: true }
 		);
@@ -240,7 +245,7 @@ async function deleteMySlot(req, res, next) {
 
 		const slot = await AvailabilitySlot.findOneAndDelete({
 			_id: req.params.slotId,
-			providerId: req.user.id
+			providerId: providerIdInQuery(req.user.id)
 		});
 		if (!slot) {
 			return res.status(404).json({ message: 'Bloque no encontrado' });

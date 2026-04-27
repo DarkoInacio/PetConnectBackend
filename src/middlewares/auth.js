@@ -11,8 +11,9 @@ async function authMiddleware(req, res, next) {
 			return res.status(401).json({ message: 'No autenticado' });
 		}
 		const decoded = verifyToken(token);
+		const rawId = decoded.id ?? decoded.sub ?? decoded.userId;
 		// Cargar usuario para asegurar que existe y no está eliminado en el futuro
-		const user = await User.findById(decoded.id).select('_id role email');
+		const user = await User.findById(rawId).select('_id role email');
 		if (!user) {
 			return res.status(401).json({ message: 'Usuario no válido' });
 		}

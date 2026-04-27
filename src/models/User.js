@@ -112,7 +112,10 @@ const providerProfileSchema = new mongoose.Schema(
 		},
 		rejectionReason: { type: String },
 		reviewedAt: { type: Date },
-		reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
+		reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+		/** Recepción / tramos de clínica (hora Chile, HH:MM). Usados al generar disponibilidad. */
+		agendaSlotStart: { type: String, trim: true },
+		agendaSlotEnd: { type: String, trim: true }
 	},
 	{ _id: false }
 );

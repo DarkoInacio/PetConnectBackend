@@ -5,8 +5,11 @@ function authorizeRoles(...allowedRoles) {
 		if (!req.user) {
 			return res.status(401).json({ message: 'No autenticado' });
 		}
-		if (!allowedRoles.includes(req.user.role)) {
-			return res.status(403).json({ message: 'No autorizado' });
+		const role = String(req.user.role || '').trim();
+		if (!allowedRoles.includes(role)) {
+			return res.status(403).json({
+				message: `No autorizado: esta ruta requiere rol ${allowedRoles.join(' o ')}. Tu sesión tiene rol "${role || 'desconocido'}". Si acabas de registrar una clínica, usa ese usuario o cierra sesión y vuelve a entrar.`
+			});
 		}
 		next();
 	};

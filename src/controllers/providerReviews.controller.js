@@ -9,6 +9,7 @@ const {
 	syncProviderRatingToUser,
 	formatReviewsForPublic
 } = require('../services/providerRating.service');
+const { isProveedorAprobado } = require('../utils/providerEligibility');
 
 /**
  * POST /api/proveedores/:providerId/reviews
@@ -36,7 +37,7 @@ async function createProviderReview(req, res, next) {
 		}
 
 		const prov = await User.findById(providerId).select('role status providerProfile.isPublished');
-		if (!prov || prov.role !== 'proveedor' || prov.status !== 'aprobado') {
+		if (!prov || !isProveedorAprobado(prov)) {
 			return res.status(404).json({ message: 'Proveedor no encontrado' });
 		}
 		if (prov.providerProfile && prov.providerProfile.isPublished === false) {
@@ -83,7 +84,7 @@ async function listProviderReviews(req, res, next) {
 		}
 
 		const prov = await User.findById(providerId).select('role status providerProfile.isPublished');
-		if (!prov || prov.role !== 'proveedor' || prov.status !== 'aprobado') {
+		if (!prov || !isProveedorAprobado(prov)) {
 			return res.status(404).json({ message: 'Proveedor no encontrado' });
 		}
 		if (prov.providerProfile && prov.providerProfile.isPublished === false) {
