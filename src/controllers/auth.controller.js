@@ -132,6 +132,16 @@ async function forgotPassword(req, res, next) {
 		const resetUrl = `${process.env.CLIENT_URL || 'http://localhost:5173'}/reset-password?token=${resetToken}&email=${encodeURIComponent(
 			user.email
 		)}`;
+
+		// En desarrollo devolvemos el link directamente para facilitar pruebas
+		// sin depender de un proveedor SMTP configurado.
+		if (process.env.NODE_ENV !== 'production') {
+			return res.status(200).json({
+				message: 'Link de recuperación generado (modo desarrollo)',
+				resetUrl
+			});
+		}
+
 		await sendEmail({
 			to: user.email,
 			subject: 'Recuperación de contraseña',
@@ -140,6 +150,19 @@ async function forgotPassword(req, res, next) {
 
 		return res.status(200).json({ message: 'Si el correo existe, enviaremos instrucciones' });
 	} catch (error) {
+		if (error.code === 'MAIL_CONFIG_MISSING') {
+			return res.status(500).json({ message: error.message });
+		}
+		if (
+			error &&
+			(error.responseCode === 535 ||
+				error.code === 'EAUTH' ||
+				(typeof error.message === 'string' && error.message.includes('Invalid login')))
+		) {
+			return res.status(500).json({
+				message: 'No se pudo enviar el correo de recuperación. Revisa MAIL_USER y MAIL_PASS del backend.'
+			});
+		}
 		next(error);
 	}
 }
