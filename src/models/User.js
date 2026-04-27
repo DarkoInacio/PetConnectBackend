@@ -7,6 +7,15 @@ const USER_ROLES = ['dueno', 'proveedor', 'admin'];
 const PROVIDER_STATUSES = ['en_revision', 'aprobado', 'rechazado'];
 const PROVIDER_KINDS = ['veterinaria', 'paseador', 'cuidador'];
 
+function normalizeRoleValue(value) {
+	if (typeof value !== 'string') return value;
+	return value
+		.normalize('NFD')
+		.replace(/[\u0300-\u036f]/g, '')
+		.toLowerCase()
+		.trim();
+}
+
 const addressSchema = new mongoose.Schema(
 	{
 		street: { type: String, trim: true },
@@ -140,6 +149,7 @@ const userSchema = new mongoose.Schema(
 			type: String,
 			enum: USER_ROLES,
 			default: 'dueno',
+			set: normalizeRoleValue,
 			index: true
 		},
 		providerType: {
@@ -183,6 +193,11 @@ userSchema.pre('save', async function (next) {
 	if (!this.isModified('password')) return next();
 	const salt = await bcrypt.genSalt(10);
 	this.password = await bcrypt.hash(this.password, salt);
+	next();
+});
+
+userSchema.pre('validate', function (next) {
+	this.role = normalizeRoleValue(this.role);
 	next();
 });
 
