@@ -115,7 +115,10 @@ const providerProfileSchema = new mongoose.Schema(
 		gallery: [{ type: String }],
 		rejectionReason: { type: String },
 		reviewedAt: { type: Date },
-		reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
+		reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+		adminSuspendedAt: { type: Date },
+		adminSuspendedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+		adminSuspendReason: { type: String, trim: true }
 	},
 	{ _id: false }
 );
@@ -176,7 +179,7 @@ const userSchema = new mongoose.Schema(
 		},
 		status: {
 			type: String,
-			enum: PROVIDER_STATUSES.concat(['activo']),
+			enum: PROVIDER_STATUSES.concat(['activo', 'suspendido']),
 			default: function () {
 				return this.role === 'proveedor' ? 'en_revision' : 'activo';
 			}

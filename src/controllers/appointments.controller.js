@@ -53,6 +53,9 @@ async function listAvailableSlotsByProvider(req, res, next) {
 		if (!provider || provider.role !== 'proveedor') {
 			return res.status(404).json({ message: 'Proveedor no encontrado' });
 		}
+		if (provider.status === 'suspendido') {
+			return res.status(400).json({ message: 'Este proveedor no esta disponible temporalmente' });
+		}
 		if (provider.status !== 'aprobado') {
 			return res.status(400).json({ message: 'El proveedor no esta disponible para citas' });
 		}
@@ -83,7 +86,7 @@ async function listAvailableSlotsByProvider(req, res, next) {
 
 async function createAppointment(req, res, next) {
 	try {
-		const { providerId, slotId, reason, pet, status } = req.body;
+		const { providerId, slotId, reason, pet, petId, status } = req.body;
 		if (!providerId || !slotId) {
 			return res.status(400).json({ message: 'Campos obligatorios: providerId, slotId' });
 		}
@@ -94,6 +97,9 @@ async function createAppointment(req, res, next) {
 		const provider = await User.findById(providerId).select('_id role status');
 		if (!provider || provider.role !== 'proveedor') {
 			return res.status(404).json({ message: 'Proveedor no encontrado' });
+		}
+		if (provider.status === 'suspendido') {
+			return res.status(400).json({ message: 'Este proveedor no esta disponible temporalmente' });
 		}
 		if (provider.status !== 'aprobado') {
 			return res.status(400).json({ message: 'El proveedor no esta disponible para citas' });
@@ -120,6 +126,20 @@ async function createAppointment(req, res, next) {
 			return res.status(409).json({ message: 'El bloque ya no esta disponible' });
 		}
 
+		let petObjectId;
+		if (petId !== undefined && petId !== null && String(petId).trim()) {
+			if (!mongoose.Types.ObjectId.isValid(petId)) {
+				await AvailabilitySlot.create({
+					providerId: consumedSlot.providerId,
+					startAt: consumedSlot.startAt,
+					endAt: consumedSlot.endAt,
+					status: consumedSlot.status
+				});
+				return res.status(400).json({ message: 'petId invalido' });
+			}
+			petObjectId = new mongoose.Types.ObjectId(String(petId));
+		}
+
 		try {
 			const appointment = await Appointment.create({
 				ownerId: req.user.id,
@@ -128,6 +148,7 @@ async function createAppointment(req, res, next) {
 				startAt: consumedSlot.startAt,
 				endAt: consumedSlot.endAt,
 				pet: parsedPet?.value,
+				petId: petObjectId,
 				reason: reason || undefined,
 				status: parsedStatus.value
 			});

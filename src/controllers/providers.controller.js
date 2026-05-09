@@ -5,7 +5,14 @@ const User = require('../models/User');
 const { distanceKm } = require('../utils/haversine');
 const { geocodeAddressNominatim } = require('../utils/geocodeNominatim');
 
-const PRIVATE_PROFILE_KEYS = new Set(['rejectionReason', 'reviewedAt', 'reviewedBy']);
+const PRIVATE_PROFILE_KEYS = new Set([
+	'rejectionReason',
+	'reviewedAt',
+	'reviewedBy',
+	'adminSuspendedAt',
+	'adminSuspendedBy',
+	'adminSuspendReason'
+]);
 const DEFAULT_MAP_CENTER = {
 	lat: -33.4489,
 	lng: -70.6693,
