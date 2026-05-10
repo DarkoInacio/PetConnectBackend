@@ -7,7 +7,9 @@
   "scripts": {
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
-    "start:prod": "NODE_ENV=production node src/server.js"
+    "start:prod": "NODE_ENV=production node src/server.js",
+    "migrate:clinic-services": "node scripts/migrate-clinic-services.js",
+    "seed:admin": "node scripts/create-admin.js"
   },
   "keywords": [
     "node",
@@ -28,11 +30,14 @@
     "express-rate-limit": "^7.1.5",
     "helmet": "^7.1.0",
     "jsonwebtoken": "^9.0.2",
+    "luxon": "^3.7.2",
     "mongoose": "^8.3.5",
     "morgan": "^1.10.0",
     "multer": "^1.4.5-lts.1",
     "node-cron": "^3.0.3",
-    "nodemailer": "^8.0.3"
+    "nodemailer": "^8.0.3",
+    "pdfkit": "^0.18.0",
+    "sharp": "^0.34.5"
   },
   "devDependencies": {
     "nodemon": "^3.1.0"

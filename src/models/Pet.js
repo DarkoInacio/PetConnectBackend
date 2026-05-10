@@ -2,6 +2,8 @@
 
 const mongoose = require('mongoose');
 
+const PET_SPECIES = ['perro', 'gato', 'ave', 'roedor', 'otro'];
+const PET_SEX = ['macho', 'hembra', 'desconocido'];
 const PET_STATUS = ['active', 'deceased'];
 
 const petSchema = new mongoose.Schema(
@@ -13,25 +15,35 @@ const petSchema = new mongoose.Schema(
 			index: true
 		},
 		name: { type: String, required: true, trim: true },
-		species: { type: String, required: true, trim: true },
+		species: {
+			type: String,
+			required: true,
+			enum: PET_SPECIES
+		},
 		breed: { type: String, trim: true, default: '' },
-		birthDate: { type: Date },
+		birthDate: { type: Date, default: null },
 		sex: {
 			type: String,
-			enum: ['macho', 'hembra', 'desconocido'],
-			default: 'desconocido'
+			required: true,
+			enum: PET_SEX
 		},
-		color: { type: String, trim: true },
-		/** Ruta relativa bajo /uploads (ej. pets/nombre-123.jpg) */
-		foto: { type: String, trim: true },
+		color: { type: String, trim: true, default: '' },
+		/** Nombre de archivo bajo uploads/pets/ (sin servir por URL pública directa) */
+		photoFilename: { type: String, default: null },
 		status: {
 			type: String,
 			enum: PET_STATUS,
-			default: 'active'
-		}
+			default: 'active',
+			index: true
+		},
+		deceasedAt: { type: Date, default: null }
 	},
 	{ timestamps: true }
 );
 
+petSchema.index({ ownerId: 1, status: 1 });
+
 module.exports = mongoose.model('Pet', petSchema);
+module.exports.PET_SPECIES = PET_SPECIES;
+module.exports.PET_SEX = PET_SEX;
 module.exports.PET_STATUS = PET_STATUS;

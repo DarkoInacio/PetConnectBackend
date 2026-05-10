@@ -4,22 +4,33 @@
 require('dotenv').config();
 
 const http = require('http');
+const { logScopeIfSpa } = require('./config/apiScope');
 const app = require('./app');
 const { connectMongo } = require('./config/db');
-const { startOwnerAppointmentsCronJobs } = require('./jobs/ownerAppointmentsCron');
 const { startAppointmentReminderJob } = require('./jobs/appointmentReminders.job');
 
 const PORT = process.env.PORT || 3000;
 
+function requireEnv(key) {
+	const value = process.env[key];
+	if (!value || String(value).trim() === '') {
+		throw new Error(`${key} no está definido en variables de entorno.`);
+	}
+	return value;
+}
+
 async function startServer() {
+	// Variables críticas (fallar rápido con mensaje claro)
+	requireEnv('JWT_SECRET');
+	requireEnv('MONGODB_URI');
+
 	// Conectar a MongoDB
 	await connectMongo();
-
-	startOwnerAppointmentsCronJobs();
 
 	// Iniciar servidor HTTP
 	const server = http.createServer(app);
 	server.listen(PORT, () => {
+		logScopeIfSpa();
 		console.log(`Servidor escuchando en puerto ${PORT}`);
 	});
 

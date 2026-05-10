@@ -1,110 +1,80 @@
 'use strict';
 
-const mongoose = require('mongoose');
 const Appointment = require('../models/Appointment');
 
-function serializeOwnerAppointment(a) {
-	const prov = a.providerId;
-	const provider =
-		prov && typeof prov === 'object' && prov.name !== undefined
-			? {
-					_id: prov._id,
-					name: prov.name,
-					lastName: prov.lastName,
-					email: prov.email,
-					providerType: prov.providerType
-				}
-			: null;
-
+function normalizeAppointment(a) {
 	return {
 		kind: 'appointment',
-		id: String(a._id),
-		bookingSource: 'availability_slot',
+		id: a._id,
+		bookingSource: a.bookingSource || 'availability_slot',
+		slotId: a.slotId || null,
+		petId: a.petId || null,
 		startAt: a.startAt,
 		endAt: a.endAt,
 		status: a.status,
-		provider,
-		pet: a.pet,
-		petId: a.petId ? String(a.petId) : undefined,
-		reason: a.reason || '',
-		clinicService: null
+		reason: a.reason || null,
+		pet: a.pet || null,
+		cancellationReason: a.cancellationReason || null,
+		cancelledAt: a.cancelledAt || null,
+		providerId: a.providerId,
+		createdAt: a.createdAt,
+		updatedAt: a.updatedAt
 	};
 }
 
-function serializeProviderAppointment(a) {
-	const own = a.ownerId;
-	const owner =
-		own && typeof own === 'object' && own.name !== undefined
-			? {
-					_id: own._id,
-					name: own.name,
-					lastName: own.lastName,
-					email: own.email,
-					phone: own.phone || undefined
-				}
-			: null;
-
-	return {
-		kind: 'appointment',
-		id: String(a._id),
-		bookingSource: 'availability_slot',
-		startAt: a.startAt,
-		endAt: a.endAt,
-		status: a.status,
-		owner,
-		pet: a.pet,
-		petId: a.petId ? String(a.petId) : undefined,
-		reason: a.reason || '',
-		clinicService: null,
-		internalNotes: typeof a.internalNotes === 'string' ? a.internalNotes : ''
-	};
-}
-
-async function listMyBookings(req, res, next) {
+/**
+ * GET /api/bookings/mine — reservas del dueño (modelo Appointment)
+ */
+async function listUnifiedMine(req, res, next) {
 	try {
-		const appointments = await Appointment.find({ ownerId: req.user.id })
+		const ownerId = req.user.id;
+		const appointments = await Appointment.find({ ownerId })
 			.sort({ startAt: -1 })
 			.populate('providerId', 'name lastName email providerType')
 			.lean();
-
-		const items = appointments.map(serializeOwnerAppointment);
-
-		let note = null;
-		if (process.env.NODE_ENV !== 'production') {
-			note =
-				items.length === 0
-					? 'No hay ítems de agendamiento en servidor; las reservas por franja aparecen aquí.'
-					: null;
-		}
-
-		return res.status(200).json({ items, ...(note ? { note } : {}) });
-	} catch (error) {
-		next(error);
+		const items = appointments.map((a) => ({
+			...normalizeAppointment(a),
+			provider: a.providerId
+		}));
+		return res.status(200).json({ canonical: 'Appointment', total: items.length, items });
+	} catch (err) {
+		next(err);
 	}
 }
 
-async function listProviderBookings(req, res, next) {
+/**
+ * GET /api/bookings/provider/mine — reservas donde el usuario es proveedor
+ */
+async function listUnifiedProviderMine(req, res, next) {
 	try {
-		if (!mongoose.isValidObjectId(req.user.id)) {
-			return res.status(401).json({ message: 'Usuario inválido' });
-		}
-
-		const providerObjectId = new mongoose.Types.ObjectId(req.user.id);
-
-		const appointments = await Appointment.find({ providerId: providerObjectId })
+		const providerId = req.user.id;
+		const appointments = await Appointment.find({ providerId })
 			.sort({ startAt: -1 })
-			.populate('ownerId', 'name lastName email phone')
+			.populate('ownerId', 'name lastName email')
+			.populate('clinicServiceId', 'displayName')
 			.lean();
-
-		const items = appointments.map(serializeProviderAppointment);
-
-		return res.status(200).json({ items });
-	} catch (error) {
-		next(error);
+		const items = appointments.map((a) => {
+			const rawCs = a.clinicServiceId;
+			const line =
+				rawCs && typeof rawCs === 'object' && (rawCs.displayName != null || rawCs._id)
+					? {
+							id: rawCs._id,
+							displayName:
+								rawCs.displayName != null && String(rawCs.displayName).trim() !== ''
+									? rawCs.displayName
+									: 'Línea'
+						}
+					: null;
+			return {
+				...normalizeAppointment(a),
+				owner: a.ownerId,
+				clinicService: line
+			};
+		});
+		return res.status(200).json({ total: items.length, items });
+	} catch (err) {
+		next(err);
 	}
 }
 
-module.exports = {
-	listMyBookings,
-	listProviderBookings
-};
+module.exports = { listUnifiedMine, listUnifiedProviderMine };

@@ -113,6 +113,15 @@ const providerProfileSchema = new mongoose.Schema(
 		socialMedia: socialMediaSchema,
 		referenceRate: referenceRateSchema,
 		gallery: [{ type: String }],
+		publicSlug: {
+			type: String,
+			trim: true,
+			lowercase: true,
+			default: undefined
+		},
+		// Ventana de bloques de agenda (citas), hora "de pared" en la zona del servidor (p. ej. America/Santiago)
+		agendaSlotStart: { type: String, trim: true, default: '09:00' },
+		agendaSlotEnd: { type: String, trim: true, default: '18:00' },
 		rejectionReason: { type: String },
 		reviewedAt: { type: Date },
 		reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
@@ -155,6 +164,16 @@ const userSchema = new mongoose.Schema(
 			set: normalizeRoleValue,
 			index: true
 		},
+		/** Mismo login con varias capacidades; si falta, se asume [role] en el middleware. */
+		roles: {
+			type: [
+				{
+					type: String,
+					enum: USER_ROLES
+				}
+			],
+			default: undefined
+		},
 		providerType: {
 			type: String,
 			default: null,
@@ -185,7 +204,12 @@ const userSchema = new mongoose.Schema(
 			}
 		},
 		passwordResetToken: String,
-		passwordResetExpires: Date
+		passwordResetExpires: Date,
+		/** Solo dueños: bloqueo de nuevas reseñas por moderación */
+		reviewWriteSuspended: {
+			type: Boolean,
+			default: false
+		}
 	},
 	{
 		timestamps: true
@@ -207,6 +231,8 @@ userSchema.pre('validate', function (next) {
 userSchema.methods.comparePassword = async function (candidatePassword) {
 	return bcrypt.compare(candidatePassword, this.password);
 };
+
+userSchema.index({ 'providerProfile.publicSlug': 1 }, { unique: true, sparse: true });
 
 module.exports = mongoose.model('User', userSchema);
 module.exports.USER_ROLES = USER_ROLES;

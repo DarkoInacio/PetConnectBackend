@@ -5,12 +5,8 @@ function authorizeRoles(...allowedRoles) {
 		if (!req.user) {
 			return res.status(401).json({ message: 'No autenticado' });
 		}
-		const userRole = req.user.role;
-		const ok = allowedRoles.some((role) => {
-			if (role === 'administrador' && userRole === 'admin') return true;
-			return userRole === role;
-		});
-		if (!ok) {
+		const effective = req.user.roles && req.user.roles.length > 0 ? req.user.roles : [req.user.role];
+		if (!allowedRoles.some((r) => effective.includes(r))) {
 			return res.status(403).json({ message: 'No autorizado' });
 		}
 		next();

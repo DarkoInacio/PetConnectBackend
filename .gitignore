@@ -19,8 +19,11 @@ coverage
 # Dependency directories
 node_modules/
 
-# Environment variables
+# Environment variables (contraseñas, URI, claves: solo local / Render)
 .env
+.env.local
+.env.*.local
+!.env.example
 
 # Build outputs
 dist/
@@ -37,3 +40,5 @@ Thumbs.db
 # Editor/IDE
 .vscode/
 .idea/
+
+.docs/*

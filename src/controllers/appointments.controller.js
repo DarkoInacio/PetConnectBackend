@@ -1,14 +1,50 @@
 'use strict';
 
 const mongoose = require('mongoose');
+const { DateTime } = require('luxon');
 const Appointment = require('../models/Appointment');
 const AvailabilitySlot = require('../models/AvailabilitySlot');
 const User = require('../models/User');
+const Pet = require('../models/Pet');
 const { notifyProveedorAppointmentCancelada } = require('../utils/notifyAppointmentProveedor');
+const { getAgendaZone } = require('../utils/vetAgendaSlots');
+const ClinicService = require('../models/ClinicService');
+const { ensureDefaultClinicService } = require('../utils/clinicService.util');
+const { runVetAgendaGenerateForProvider } = require('../services/vetAgendaGenerateCore.service');
+const { isProveedorAprobado } = require('../utils/providerEligibility');
+const {
+	chileWallCivilDayBounds,
+	normalizeWallHm,
+	wallMinutesFromHm,
+	filterSlotsByVetAgendaWindow,
+	slotWithinChileAgendaWall
+} = require('../utils/chileCalendar');
 
 const MIN_HOURS_BEFORE_CANCEL = 2;
 const CANCELLABLE_STATUSES = ['pending_confirmation', 'confirmed'];
 const CREATABLE_STATUSES = ['pending_confirmation', 'confirmed'];
+const SLOT_HOLD_STATUSES = ['pending_confirmation', 'confirmed'];
+
+function intervalsOverlap(aStart, aEnd, bStart, bEnd) {
+	const as = new Date(aStart).getTime();
+	const ae = new Date(aEnd).getTime();
+	const bs = new Date(bStart).getTime();
+	const be = new Date(bEnd).getTime();
+	return as < be && ae > bs;
+}
+
+function slotOverlapsHeldBookings(slot, heldAppointments) {
+	for (const a of heldAppointments) {
+		if (intervalsOverlap(slot.startAt, slot.endAt, a.startAt, a.endAt)) return true;
+	}
+	return false;
+}
+
+function providerIdFromAppointmentDoc(appointment) {
+	const p = appointment.providerId;
+	if (p && typeof p === 'object' && p._id) return p._id;
+	return p;
+}
 
 function parsePet(rawPet) {
 	if (rawPet === undefined || rawPet === null) return undefined;
@@ -43,28 +79,59 @@ function resolveInitialAppointmentStatus(rawStatus) {
 async function listAvailableSlotsByProvider(req, res, next) {
 	try {
 		const { providerId } = req.params;
-		const { date } = req.query;
+		const { date, clinicServiceId: clinicServiceIdQuery } = req.query;
 
 		if (!mongoose.Types.ObjectId.isValid(providerId)) {
 			return res.status(400).json({ message: 'providerId invalido' });
 		}
 
-		const provider = await User.findById(providerId).select('_id role status');
-		if (!provider || provider.role !== 'proveedor') {
+		const pidStr = String(providerId);
+		const providerOid = new mongoose.Types.ObjectId(pidStr);
+		let dayStartForHold = null;
+		let dayEndForHold = null;
+
+		const provider = await User.findById(providerId).select(
+			'_id role roles status providerType providerProfile.agendaSlotStart providerProfile.agendaSlotEnd'
+		);
+		const provRoles = provider && provider.roles && provider.roles.length > 0 ? provider.roles : [provider?.role];
+		if (!provider || !provRoles.includes('proveedor')) {
 			return res.status(404).json({ message: 'Proveedor no encontrado' });
 		}
-		if (provider.status === 'suspendido') {
-			return res.status(400).json({ message: 'Este proveedor no esta disponible temporalmente' });
-		}
-		if (provider.status !== 'aprobado') {
+		if (!isProveedorAprobado(provider)) {
 			return res.status(400).json({ message: 'El proveedor no esta disponible para citas' });
 		}
 
 		const query = {
-			providerId,
+			providerId: { $in: [providerOid, pidStr] },
 			status: 'available',
 			startAt: { $gte: new Date() }
 		};
+
+		if (provider.providerType === 'veterinaria') {
+			let services = await ClinicService.find({ providerId, active: true }).lean();
+			if (services.length === 0) {
+				const d = await ensureDefaultClinicService(providerId);
+				services = [d.toObject ? d.toObject() : d];
+			}
+			const rawCsid =
+				clinicServiceIdQuery != null && String(clinicServiceIdQuery).trim() !== ''
+					? String(clinicServiceIdQuery).trim()
+					: null;
+			let resolvedServiceId = rawCsid;
+			if (services.length > 1) {
+				if (!resolvedServiceId || !mongoose.Types.ObjectId.isValid(resolvedServiceId)) {
+					return res.status(400).json({
+						message: 'Indica qué línea de atención (clinicServiceId) para listar horarios de esta clínica'
+					});
+				}
+				if (!services.some((s) => String(s._id) === String(resolvedServiceId))) {
+					return res.status(400).json({ message: 'clinicServiceId no pertenece a este proveedor' });
+				}
+			} else {
+				resolvedServiceId = String(services[0]._id);
+			}
+			query.clinicServiceId = resolvedServiceId;
+		}
 
 		if (date) {
 			const dateRe = /^\d{4}-\d{2}-\d{2}$/;
@@ -72,13 +139,83 @@ async function listAvailableSlotsByProvider(req, res, next) {
 				return res.status(400).json({ message: 'date invalida. Usar formato YYYY-MM-DD' });
 			}
 			const [year, month, day] = date.split('-').map(Number);
-			const from = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
-			const to = new Date(Date.UTC(year, month - 1, day, 23, 59, 59, 999));
-			query.startAt = { $gte: from, $lte: to };
+			const zone = getAgendaZone();
+			const start = DateTime.fromObject(
+				{ year, month, day, hour: 0, minute: 0, second: 0, millisecond: 0 },
+				{ zone }
+			);
+			if (!start.isValid) {
+				return res.status(400).json({ message: 'date invalida' });
+			}
+			const end = start.endOf('day');
+			const dayStart = start.toJSDate();
+			const dayEnd = end.toJSDate();
+			const nowJs = new Date();
+			/* Día completo en el pasado: sin franjas */
+			if (dayEnd < nowJs) {
+				return res.status(200).json({ slots: [] });
+			}
+			/* Mismo calendario que ahora: solo tramos desde este instante */
+			const lower = dayStart < nowJs && nowJs <= dayEnd ? nowJs : dayStart;
+			if (lower > dayEnd) {
+				return res.status(200).json({ slots: [] });
+			}
+			query.startAt = { $gte: lower, $lte: dayEnd };
+			dayStartForHold = dayStart;
+			dayEndForHold = dayEnd;
 		}
 
-		const slots = await AvailabilitySlot.find(query).sort({ startAt: 1 });
-		return res.status(200).json({ slots });
+		let slots = await AvailabilitySlot.find(query)
+			.sort({ startAt: 1 })
+			.populate('clinicServiceId', 'displayName kind');
+
+		/* Primer agendado o límite 31 días roto: si no hay tramos para ese día, rellenamos sólo este día. */
+		if (date && provider.providerType === 'veterinaria' && slots.length === 0) {
+			const materialized = await runVetAgendaGenerateForProvider(providerId, String(date), String(date));
+			if (materialized.ok) {
+				slots = await AvailabilitySlot.find(query)
+					.sort({ startAt: 1 })
+					.populate('clinicServiceId', 'displayName kind');
+			}
+		}
+
+		let slotsPlain = slots.map((s) => (s.toObject ? s.toObject() : s));
+
+		if (String(provider.providerType) === 'veterinaria') {
+			const pp = provider.providerProfile || {};
+			slotsPlain = filterSlotsByVetAgendaWindow(slotsPlain, pp.agendaSlotStart, pp.agendaSlotEnd);
+		}
+
+		const holdBase = {
+			providerId: { $in: [providerOid, pidStr] },
+			status: { $in: SLOT_HOLD_STATUSES },
+			bookingSource: 'availability_slot'
+		};
+		const nowHold = new Date();
+		let heldAppointments = [];
+		if (date && dayStartForHold && dayEndForHold) {
+			heldAppointments = await Appointment.find({
+				...holdBase,
+				startAt: { $lt: dayEndForHold },
+				endAt: { $gt: dayStartForHold }
+			})
+				.select('startAt endAt')
+				.lean();
+		} else {
+			const horizon = new Date(nowHold.getTime() + 366 * 24 * 60 * 60 * 1000);
+			heldAppointments = await Appointment.find({
+				...holdBase,
+				endAt: { $gt: nowHold },
+				startAt: { $lt: horizon }
+			})
+				.select('startAt endAt')
+				.lean();
+		}
+		slotsPlain = slotsPlain.filter((s) => !slotOverlapsHeldBookings(s, heldAppointments));
+
+		res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+		res.set('Pragma', 'no-cache');
+		return res.status(200).json({ slots: slotsPlain });
 	} catch (error) {
 		next(error);
 	}
@@ -86,23 +223,38 @@ async function listAvailableSlotsByProvider(req, res, next) {
 
 async function createAppointment(req, res, next) {
 	try {
-		const { providerId, slotId, reason, pet, petId, status } = req.body;
-		if (!providerId || !slotId) {
-			return res.status(400).json({ message: 'Campos obligatorios: providerId, slotId' });
+		const { providerId, slotId, reason, pet, status, petId } = req.body;
+		if (!providerId || !slotId || !petId) {
+			return res.status(400).json({ message: 'Campos obligatorios: providerId, slotId, petId' });
 		}
-		if (!mongoose.Types.ObjectId.isValid(providerId) || !mongoose.Types.ObjectId.isValid(slotId)) {
-			return res.status(400).json({ message: 'providerId o slotId invalido' });
+		if (
+			!mongoose.Types.ObjectId.isValid(providerId) ||
+			!mongoose.Types.ObjectId.isValid(slotId) ||
+			!mongoose.Types.ObjectId.isValid(petId)
+		) {
+			return res.status(400).json({ message: 'providerId, slotId o petId invalido' });
 		}
 
-		const provider = await User.findById(providerId).select('_id role status');
-		if (!provider || provider.role !== 'proveedor') {
+		const provider = await User.findById(providerId).select(
+			'_id role roles status providerType providerProfile.agendaSlotStart providerProfile.agendaSlotEnd'
+		);
+		const isProv =
+			provider &&
+			(provider.role === 'proveedor' ||
+				(Array.isArray(provider.roles) && provider.roles.includes('proveedor')));
+		if (!provider || !isProv) {
 			return res.status(404).json({ message: 'Proveedor no encontrado' });
 		}
-		if (provider.status === 'suspendido') {
-			return res.status(400).json({ message: 'Este proveedor no esta disponible temporalmente' });
-		}
-		if (provider.status !== 'aprobado') {
+		if (!isProveedorAprobado(provider)) {
 			return res.status(400).json({ message: 'El proveedor no esta disponible para citas' });
+		}
+
+		const petDoc = await Pet.findOne({ _id: petId, ownerId: req.user.id }).lean();
+		if (!petDoc) {
+			return res.status(400).json({ message: 'Mascota no encontrada o no pertenece al dueño' });
+		}
+		if (petDoc.status !== 'active') {
+			return res.status(400).json({ message: 'Solo se pueden agendar mascotas activas' });
 		}
 
 		const parsedPet = parsePet(pet);
@@ -114,10 +266,11 @@ async function createAppointment(req, res, next) {
 			return res.status(400).json({ message: parsedStatus.error });
 		}
 
+		const providerOid = new mongoose.Types.ObjectId(String(providerId));
 		// Operacion atomica para consumir el bloque y evitar doble reserva.
 		const consumedSlot = await AvailabilitySlot.findOneAndDelete({
 			_id: slotId,
-			providerId,
+			providerId: { $in: [providerOid, String(providerId)] },
 			status: 'available',
 			startAt: { $gte: new Date() }
 		});
@@ -126,32 +279,62 @@ async function createAppointment(req, res, next) {
 			return res.status(409).json({ message: 'El bloque ya no esta disponible' });
 		}
 
-		let petObjectId;
-		if (petId !== undefined && petId !== null && String(petId).trim()) {
-			if (!mongoose.Types.ObjectId.isValid(petId)) {
-				await AvailabilitySlot.create({
+		if (String(provider.providerType) === 'veterinaria') {
+			const pp = provider.providerProfile || {};
+			const st = normalizeWallHm(pp.agendaSlotStart, '09:00');
+			const en = normalizeWallHm(pp.agendaSlotEnd, '18:00');
+			if (
+				wallMinutesFromHm(en) > wallMinutesFromHm(st) &&
+				!slotWithinChileAgendaWall(
+					{
+						startAt: consumedSlot.startAt,
+						endAt: consumedSlot.endAt
+					},
+					st,
+					en
+				)
+			) {
+				const restoreBad = {
 					providerId: consumedSlot.providerId,
 					startAt: consumedSlot.startAt,
 					endAt: consumedSlot.endAt,
-					status: consumedSlot.status
+					status: 'available'
+				};
+				if (consumedSlot.clinicServiceId) {
+					restoreBad.clinicServiceId = consumedSlot.clinicServiceId;
+				}
+				await AvailabilitySlot.create(restoreBad);
+				return res.status(400).json({
+					message: 'Ese horario esta fuera del horario de recepcion configurado por la clinica.'
 				});
-				return res.status(400).json({ message: 'petId invalido' });
 			}
-			petObjectId = new mongoose.Types.ObjectId(String(petId));
 		}
 
 		try {
-			const appointment = await Appointment.create({
+			const embeddedPet =
+				parsedPet?.value ||
+				(petDoc
+					? {
+							name: petDoc.name,
+							species: petDoc.species
+						}
+					: undefined);
+			const apptPayload = {
 				ownerId: req.user.id,
 				providerId,
+				bookingSource: 'availability_slot',
 				slotId,
+				petId,
 				startAt: consumedSlot.startAt,
 				endAt: consumedSlot.endAt,
-				pet: parsedPet?.value,
-				petId: petObjectId,
+				pet: embeddedPet,
 				reason: reason || undefined,
 				status: parsedStatus.value
-			});
+			};
+			if (consumedSlot.clinicServiceId) {
+				apptPayload.clinicServiceId = consumedSlot.clinicServiceId;
+			}
+			const appointment = await Appointment.create(apptPayload);
 
 			return res.status(201).json({
 				message: 'Cita agendada correctamente',
@@ -159,12 +342,16 @@ async function createAppointment(req, res, next) {
 			});
 		} catch (createError) {
 			// Compensacion: restaurar el bloque si la cita no pudo crearse.
-			await AvailabilitySlot.create({
+			const restore = {
 				providerId: consumedSlot.providerId,
 				startAt: consumedSlot.startAt,
 				endAt: consumedSlot.endAt,
 				status: consumedSlot.status
-			});
+			};
+			if (consumedSlot.clinicServiceId) {
+				restore.clinicServiceId = consumedSlot.clinicServiceId;
+			}
+			await AvailabilitySlot.create(restore);
 			throw createError;
 		}
 	} catch (error) {
@@ -210,12 +397,13 @@ async function cancelMyAppointment(req, res, next) {
 				.json({ message: 'Solo se pueden cancelar citas pendientes de confirmacion o confirmadas' });
 		}
 
-		if (appointment.status === 'confirmed') {
+		const bookingSrcOwner = appointment.bookingSource || 'availability_slot';
+		if (bookingSrcOwner === 'availability_slot' && appointment.slotId) {
 			const msBeforeStart = appointment.startAt.getTime() - Date.now();
 			const minMsRequired = MIN_HOURS_BEFORE_CANCEL * 60 * 60 * 1000;
 			if (msBeforeStart < minMsRequired) {
 				return res.status(400).json({
-					message: `Solo puedes cancelar con al menos ${MIN_HOURS_BEFORE_CANCEL} horas de anticipacion`
+					message: `Solo puedes cancelar con al menos ${MIN_HOURS_BEFORE_CANCEL} horas antes del inicio de la cita. Asi el horario puede volver a mostrarse como disponible.`
 				});
 			}
 		}
@@ -225,21 +413,28 @@ async function cancelMyAppointment(req, res, next) {
 		appointment.cancellationReason = cancellationReason;
 		await appointment.save();
 
-		await AvailabilitySlot.updateOne(
-			{
-				providerId: appointment.providerId._id || appointment.providerId,
-				startAt: appointment.startAt
-			},
-			{
-				$setOnInsert: {
-					providerId: appointment.providerId._id || appointment.providerId,
+		if (bookingSrcOwner === 'availability_slot' && appointment.slotId) {
+			const provObjectId = appointment.providerId._id || appointment.providerId;
+			const csid =
+				appointment.clinicServiceId ||
+				(await ensureDefaultClinicService(provObjectId))._id;
+			const pidOid = new mongoose.Types.ObjectId(String(provObjectId));
+			await AvailabilitySlot.replaceOne(
+				{
+					providerId: { $in: [pidOid, String(pidOid)] },
+					clinicServiceId: csid,
+					startAt: appointment.startAt
+				},
+				{
+					providerId: pidOid,
+					clinicServiceId: csid,
 					startAt: appointment.startAt,
 					endAt: appointment.endAt,
 					status: 'available'
-				}
-			},
-			{ upsert: true }
-		);
+				},
+				{ upsert: true }
+			);
+		}
 
 		notifyProveedorAppointmentCancelada({
 			proveedorEmail: appointment.providerId?.email,
@@ -255,9 +450,229 @@ async function cancelMyAppointment(req, res, next) {
 	}
 }
 
+async function confirmProviderAppointment(req, res, next) {
+	try {
+		const id = req.params.id;
+		if (!mongoose.Types.ObjectId.isValid(id)) {
+			return res.status(400).json({ message: 'Id invalido' });
+		}
+
+		const appointment = await Appointment.findOne({
+			_id: id,
+			providerId: req.user.id
+		});
+		if (!appointment) {
+			return res.status(404).json({ message: 'Reserva no encontrada' });
+		}
+		if (appointment.status !== 'pending_confirmation') {
+			return res.status(400).json({ message: 'Solo se pueden confirmar reservas pendientes de confirmacion' });
+		}
+
+		appointment.status = 'confirmed';
+		await appointment.save();
+
+		const fresh = await Appointment.findById(appointment._id)
+			.populate('ownerId', 'name lastName email')
+			.lean();
+		return res.status(200).json({ message: 'Reserva confirmada', appointment: fresh });
+	} catch (error) {
+		next(error);
+	}
+}
+
+async function cancelProviderAppointment(req, res, next) {
+	try {
+		const id = req.params.id;
+		if (!mongoose.Types.ObjectId.isValid(id)) {
+			return res.status(400).json({ message: 'Id invalido' });
+		}
+
+		const cancellationReason =
+			req.body?.cancellationReason == null ? '' : String(req.body.cancellationReason).trim();
+		if (!cancellationReason) {
+			return res.status(400).json({ message: 'cancellationReason es obligatorio' });
+		}
+		if (cancellationReason.length > 200) {
+			return res.status(400).json({ message: 'cancellationReason no puede superar 200 caracteres' });
+		}
+
+		const appointment = await Appointment.findOne({
+			_id: id,
+			providerId: req.user.id
+		});
+		if (!appointment) {
+			return res.status(404).json({ message: 'Reserva no encontrada' });
+		}
+		if (!CANCELLABLE_STATUSES.includes(appointment.status)) {
+			return res
+				.status(400)
+				.json({ message: 'Solo se pueden cancelar reservas pendientes de confirmacion o confirmadas' });
+		}
+
+		const bookingSrcProv = appointment.bookingSource || 'availability_slot';
+		if (bookingSrcProv === 'availability_slot' && appointment.slotId) {
+			const msBeforeStart = appointment.startAt.getTime() - Date.now();
+			const minMsRequired = MIN_HOURS_BEFORE_CANCEL * 60 * 60 * 1000;
+			if (msBeforeStart < minMsRequired) {
+				return res.status(400).json({
+					message: `Solo puedes cancelar con al menos ${MIN_HOURS_BEFORE_CANCEL} horas antes del inicio de la cita. Asi el horario puede volver a mostrarse como disponible.`
+				});
+			}
+		}
+
+		appointment.status = 'cancelled_by_provider';
+		appointment.cancelledAt = new Date();
+		appointment.cancellationReason = cancellationReason;
+		await appointment.save();
+
+		if (bookingSrcProv === 'availability_slot' && appointment.slotId) {
+			const provObjectId = appointment.providerId;
+			const csid = appointment.clinicServiceId || (await ensureDefaultClinicService(provObjectId))._id;
+			const pidOid = new mongoose.Types.ObjectId(String(provObjectId));
+			await AvailabilitySlot.replaceOne(
+				{
+					providerId: { $in: [pidOid, String(pidOid)] },
+					clinicServiceId: csid,
+					startAt: appointment.startAt
+				},
+				{
+					providerId: pidOid,
+					clinicServiceId: csid,
+					startAt: appointment.startAt,
+					endAt: appointment.endAt,
+					status: 'available'
+				},
+				{ upsert: true }
+			);
+		}
+
+		const fresh = await Appointment.findById(appointment._id)
+			.populate('ownerId', 'name lastName email')
+			.lean();
+		return res.status(200).json({ message: 'Reserva cancelada', appointment: fresh });
+	} catch (error) {
+		next(error);
+	}
+}
+
+/**
+ * Marcar como completada reservas de agenda (clínica, availability_slot).
+ */
+async function completeProviderVetClinicAppointment(req, res, next) {
+	try {
+		const id = req.params.id;
+		if (!mongoose.Types.ObjectId.isValid(id)) {
+			return res.status(400).json({ message: 'Id invalido' });
+		}
+
+		const appointment = await Appointment.findOne({
+			_id: id,
+			providerId: req.user.id
+		});
+		if (!appointment) {
+			return res.status(404).json({ message: 'Reserva no encontrada' });
+		}
+		if (appointment.bookingSource !== 'availability_slot') {
+			return res.status(400).json({
+				message: 'Marcar completada aquí solo aplica a reservas de agenda (clínica)'
+			});
+		}
+		if (!['pending_confirmation', 'confirmed'].includes(appointment.status)) {
+			return res.status(400).json({
+				message: 'Solo se puede completar una reserva pendiente o ya confirmada'
+			});
+		}
+
+		appointment.status = 'completed';
+		await appointment.save();
+
+		const fresh = await Appointment.findById(appointment._id)
+			.populate('ownerId', 'name lastName email')
+			.lean();
+		return res.status(200).json({ message: 'Atención marcada como completada', appointment: fresh });
+	} catch (error) {
+		next(error);
+	}
+}
+
+/**
+ * Marcar como completada solo solicitudes paseador/cuidador (walker_request).
+ * Las reservas de clínica usan completeProviderVetClinicAppointment.
+ */
+async function completeProviderWalkerAppointment(req, res, next) {
+	try {
+		const id = req.params.id;
+		if (!mongoose.Types.ObjectId.isValid(id)) {
+			return res.status(400).json({ message: 'Id invalido' });
+		}
+
+		const appointment = await Appointment.findOne({
+			_id: id,
+			providerId: req.user.id
+		});
+		if (!appointment) {
+			return res.status(404).json({ message: 'Reserva no encontrada' });
+		}
+		if (appointment.bookingSource !== 'walker_request') {
+			return res.status(400).json({
+				message: 'Marcar completada aquí solo aplica a solicitudes de paseo o cuidado (walker_request)'
+			});
+		}
+		if (!['pending_confirmation', 'confirmed'].includes(appointment.status)) {
+			return res.status(400).json({
+				message: 'Solo se puede completar una solicitud pendiente o ya confirmada'
+			});
+		}
+
+		appointment.status = 'completed';
+		await appointment.save();
+
+		const fresh = await Appointment.findById(appointment._id)
+			.populate('ownerId', 'name lastName email')
+			.lean();
+		return res.status(200).json({ message: 'Servicio marcado como completado', appointment: fresh });
+	} catch (error) {
+		next(error);
+	}
+}
+
+/**
+ * Marcar cita (veterinaria / servicio con slot o legacy) como completada para habilitar reseñas.
+ * Distinto de complete-walker (solo walker_request).
+ */
+async function completeProviderVisit(req, res, next) {
+	try {
+		const id = req.params.id;
+		if (!mongoose.Types.ObjectId.isValid(id)) {
+			return res.status(400).json({ message: 'Id invalido' });
+		}
+		const appointment = await Appointment.findOne({ _id: id, providerId: req.user.id });
+		if (!appointment) {
+			return res.status(404).json({ message: 'Reserva no encontrada' });
+		}
+		if (appointment.bookingSource === 'walker_request') {
+			return res.status(400).json({ message: 'Usar PATCH .../provider/complete-walker para paseos/cuidado' });
+		}
+		if (!['pending_confirmation', 'confirmed'].includes(appointment.status)) {
+			return res.status(400).json({ message: 'Solo citas confirmadas o pendientes pueden completarse' });
+		}
+		appointment.status = 'completed';
+		await appointment.save();
+		const fresh = await Appointment.findById(appointment._id).lean();
+		return res.status(200).json({ message: 'Cita completada', appointment: fresh });
+	} catch (error) {
+		next(error);
+	}
+}
+
 module.exports = {
 	listAvailableSlotsByProvider,
 	createAppointment,
 	listMyAppointments,
-	cancelMyAppointment
+	cancelMyAppointment,
+	confirmProviderAppointment,
+	cancelProviderAppointment,
+	completeProviderVetClinicAppointment,
+	completeProviderWalkerAppointment,
+	completeProviderVisit
 };

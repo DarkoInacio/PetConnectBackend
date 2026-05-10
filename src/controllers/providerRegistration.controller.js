@@ -64,6 +64,7 @@ async function registerProvider(req, res, next) {
 			email: normalizedEmail,
 			password,
 			role: 'proveedor',
+			roles: ['proveedor'],
 			providerType,
 			phone: String(phone).trim(),
 			status: 'en_revision',
@@ -88,6 +89,7 @@ async function registerProvider(req, res, next) {
 				lastName: user.lastName,
 				email: user.email,
 				role: user.role,
+				roles: user.roles,
 				providerType: user.providerType,
 				status: user.status,
 				providerProfile: user.providerProfile
@@ -102,4 +104,79 @@ async function registerProvider(req, res, next) {
 	}
 }
 
-module.exports = { registerProvider };
+/**
+ * Dueño autenticado solicita añadir rol proveedor (mismo login, misma cuenta).
+ * POST /api/auth/upgrade-to-proveedor — multipart campos como register-provider (sin email/password nuevos)
+ */
+async function upgradeOwnerToProvider(req, res, next) {
+	const files = req.files || [];
+	try {
+		const me = await User.findById(req.user.id);
+		if (!me) {
+			unlinkUploadedFiles(files);
+			return res.status(404).json({ message: 'Usuario no encontrado' });
+		}
+		const eff = me.roles && me.roles.length > 0 ? me.roles : [me.role];
+		if (!eff.includes('dueno')) {
+			unlinkUploadedFiles(files);
+			return res.status(400).json({ message: 'Solo aplica a cuentas de dueño' });
+		}
+		if (eff.includes('proveedor')) {
+			unlinkUploadedFiles(files);
+			return res.status(400).json({ message: 'Tu cuenta ya puede actuar como proveedor' });
+		}
+
+		const { phone, providerType } = req.body || {};
+		if (!phone || !String(phone).trim()) {
+			unlinkUploadedFiles(files);
+			return res.status(400).json({ message: 'El teléfono es obligatorio para ofrecer servicios' });
+		}
+		if (!providerType) {
+			unlinkUploadedFiles(files);
+			return res.status(400).json({ message: 'Seleccione el tipo: veterinaria, paseador o cuidador' });
+		}
+
+		const galleryPaths = files.map((f) => `/uploads/${f.filename}`);
+		const built = buildAndValidateProviderProfile(providerType, req.body, galleryPaths);
+		if (!built.ok) {
+			unlinkUploadedFiles(files);
+			return res.status(400).json({ message: built.message });
+		}
+
+		me.phone = String(phone).trim();
+		me.roles = ['dueno', 'proveedor'];
+		me.role = 'dueno';
+		me.providerType = providerType;
+		me.status = 'en_revision';
+		me.providerProfile = built.profile;
+		await me.save();
+
+		notifyAdminsNewProvider({
+			name: me.name,
+			lastName: me.lastName,
+			email: me.email,
+			providerType: me.providerType,
+			phone: me.phone
+		}).catch((err) => console.error('notifyAdminsNewProvider:', err.message));
+
+		return res.status(201).json({
+			message: 'Solicitud registrada. Mantiene tu sesión de dueño; el perfil proveedor queda en revisión.',
+			user: {
+				id: me._id,
+				name: me.name,
+				lastName: me.lastName,
+				email: me.email,
+				role: me.role,
+				roles: me.roles,
+				providerType: me.providerType,
+				status: me.status,
+				providerProfile: me.providerProfile
+			}
+		});
+	} catch (err) {
+		unlinkUploadedFiles(files);
+		next(err);
+	}
+}
+
+module.exports = { registerProvider, upgradeOwnerToProvider };

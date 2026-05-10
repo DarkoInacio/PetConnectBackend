@@ -15,6 +15,13 @@ async function connectMongo() {
 			autoIndex: true
 		});
 		console.log('Conectado a MongoDB');
+		// Sustituye índice antiguo único en slotId (incluía null) por índice parcial del modelo.
+		try {
+			const Appointment = require('../models/Appointment');
+			await Appointment.syncIndexes();
+		} catch (e) {
+			console.warn('Appointment.syncIndexes:', e.message);
+		}
 	} catch (error) {
 		console.error('Error conectando a MongoDB:', error.message);
 		throw error;
