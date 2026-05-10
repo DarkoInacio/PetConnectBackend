@@ -3,7 +3,14 @@
 const mongoose = require('mongoose');
 const Review = require('../models/Review');
 const User = require('../models/User');
-const { REVIEW_DIRECTIONS } = Review;
+
+/** Texto visible de la reseña (observation sustituye a comment legado). */
+function getObservationText(d) {
+	if (!d) return '';
+	const obs = d.observation != null ? String(d.observation).trim() : '';
+	if (obs) return obs;
+	return d.comment != null ? String(d.comment).trim() : '';
+}
 
 function round1(n) {
 	return Math.round(n * 10) / 10;
@@ -78,7 +85,7 @@ function formatReviewsForPublic(docs, options = {}) {
 		const out = {
 			id: d._id,
 			rating: d.rating,
-			comment: d.comment || '',
+			comment: getObservationText(d),
 			createdAt: d.createdAt,
 			author: d.ownerId
 				? {
@@ -104,6 +111,7 @@ function formatReviewsForPublic(docs, options = {}) {
 }
 
 module.exports = {
+	getObservationText,
 	getRatingSummary,
 	getRecentReviews,
 	syncProviderRatingToUser,

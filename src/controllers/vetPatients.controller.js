@@ -30,6 +30,7 @@ async function listVetPatients(req, res, next) {
 			proximoDias = n;
 		}
 
+		/** Citas marcadas como completadas (con mascota). */
 		const grouped = await Appointment.aggregate([
 			{
 				$match: {
@@ -46,8 +47,32 @@ async function listVetPatients(req, res, next) {
 			}
 		]);
 
-		const petIds = grouped.map((g) => g._id);
-		const lastMap = new Map(grouped.map((g) => [g._id.toString(), g.lastVisitAt]));
+		/**
+		 * Fichas clínicas firmadas: el flujo permite registrar la atención con cita aún en "confirmed",
+		 * sin pasar por "completed". Esas mascotas deben aparecer como pacientes atendidos.
+		 */
+		const encGrouped = await ClinicalEncounter.aggregate([
+			{ $match: { providerId: oid } },
+			{ $group: { _id: '$petId', lastEncounterAt: { $max: '$occurredAt' } } }
+		]);
+
+		const lastMap = new Map();
+		for (const g of grouped) {
+			if (!g._id) continue;
+			const id = g._id.toString();
+			lastMap.set(id, new Date(g.lastVisitAt));
+		}
+		for (const g of encGrouped) {
+			if (!g._id) continue;
+			const id = g._id.toString();
+			const encAt = new Date(g.lastEncounterAt);
+			const prev = lastMap.get(id);
+			if (!prev || encAt.getTime() > prev.getTime()) {
+				lastMap.set(id, encAt);
+			}
+		}
+
+		const petIds = [...lastMap.keys()].map((id) => new mongoose.Types.ObjectId(id));
 
 		const pets = await Pet.find({ _id: { $in: petIds } })
 			.populate('ownerId', 'name lastName email')
@@ -90,7 +115,7 @@ async function listVetPatients(req, res, next) {
 
 			let pendingEncounterAppointmentId = null;
 			for (const ap of completedAppts) {
-				const hasEnc = await ClinicalEncounter.exists({ appointmentId: ap._id });
+				const hasEnc = await ClinicalEncounter.exists({ appointmentId: ap._id, providerId: oid });
 				if (!hasEnc) {
 					pendingEncounterAppointmentId = String(ap._id);
 					break;

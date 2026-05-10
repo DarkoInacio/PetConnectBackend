@@ -9,7 +9,7 @@ async function requireVeterinarian(req, res, next) {
 		if (!roles.includes('proveedor')) {
 			return res.status(403).json({ message: 'Solo veterinarias pueden acceder' });
 		}
-		const user = await User.findById(req.user.id).select('providerType status');
+		const user = await User.findById(req.user.id).select('providerType status role roles');
 		if (!user || user.providerType !== 'veterinaria') {
 			return res.status(403).json({ message: 'Solo cuentas de veterinaria aprobadas pueden acceder' });
 		}

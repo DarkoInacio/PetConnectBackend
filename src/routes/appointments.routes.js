@@ -21,6 +21,7 @@ const {
 	getReviewEligibility,
 	createReviewForAppointment
 } = require('../controllers/appointmentReviews.controller');
+const { patchAppointmentInternalNotes } = require('../controllers/appointmentsProvider.controller');
 
 router.get('/providers/:providerId/available-slots', auth, authorizeRoles('dueno'), listAvailableSlotsByProvider);
 
@@ -36,10 +37,6 @@ router.patch('/:id/provider/complete-visit', auth, authorizeRoles('proveedor'), 
 router.patch('/:id/provider/cancel', auth, authorizeRoles('proveedor'), cancelProviderAppointment);
 router.patch('/:id/cancel', auth, authorizeRoles('dueno'), cancelMyAppointment);
 
-router.patch('/:id/provider/confirm', auth, authorizeRoles('proveedor'), confirmAppointmentAsProvider);
-router.patch('/:id/provider/cancel', auth, authorizeRoles('proveedor'), cancelAppointmentAsProvider);
-router.patch('/:id/provider/complete-vet', auth, authorizeRoles('proveedor'), completeVetClinicAppointmentAsProvider);
-router.patch('/:id/provider/complete-walker', auth, authorizeRoles('proveedor'), completeWalkerAppointmentAsProvider);
 router.patch(
 	'/:id/provider/internal-notes',
 	auth,

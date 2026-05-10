@@ -79,7 +79,10 @@ async function listActiveProviders(req, res, next) {
 		const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 20));
 		const skip = (page - 1) * limit;
 
-		const filter = { role: 'proveedor', status: 'aprobado' };
+		const filter = {
+			status: 'aprobado',
+			$or: [{ role: 'proveedor' }, { roles: { $in: ['proveedor'] } }]
+		};
 		const [items, total] = await Promise.all([
 			User.find(filter)
 				.sort({ createdAt: -1 })
@@ -108,7 +111,10 @@ async function listSuspendedProviders(req, res, next) {
 		const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 20));
 		const skip = (page - 1) * limit;
 
-		const filter = { role: 'proveedor', status: 'suspendido' };
+		const filter = {
+			status: 'suspendido',
+			$or: [{ role: 'proveedor' }, { roles: { $in: ['proveedor'] } }]
+		};
 		const [items, total] = await Promise.all([
 			User.find(filter)
 				.sort({ 'providerProfile.adminSuspendedAt': -1 })
@@ -150,6 +156,7 @@ async function approveProvider(req, res, next) {
 
 		user.status = 'aprobado';
 		if (!user.providerProfile) user.providerProfile = {};
+		user.providerProfile.isPublished = true;
 		user.providerProfile.rejectionReason = undefined;
 		user.providerProfile.reviewedAt = new Date();
 		user.providerProfile.reviewedBy = req.user.id;
@@ -191,6 +198,9 @@ async function rejectProvider(req, res, next) {
 		const reason = (req.body.reason || '').trim();
 		if (!reason) {
 			return res.status(400).json({ message: 'Debe indicar el motivo del rechazo (reason)' });
+		}
+		if (reason.length > 2000) {
+			return res.status(400).json({ message: 'El motivo no puede superar 2000 caracteres' });
 		}
 
 		const user = await User.findById(req.params.userId);
@@ -247,7 +257,9 @@ async function rejectProvider(req, res, next) {
 			await sendEmail({
 				to: user.email,
 				subject: 'PetConnect: actualización sobre tu solicitud de proveedor',
-				html: `<p>Hola ${user.name},</p><p>Lamentamos informarte que tu solicitud como <strong>${providerTypeLabel || 'proveedor'}</strong> no ha sido aprobada.</p><p><strong>Motivo:</strong></p><p>${escapeHtml(
+				html: `<p>Hola ${escapeHtml(user.name || '')},</p><p>Lamentamos informarte que tu solicitud como <strong>${escapeHtml(
+					String(providerTypeLabel || 'proveedor')
+				)}</strong> no ha sido aprobada.</p><p><strong>Motivo:</strong></p><p>${escapeHtml(
 					reason
 				)}</p>${bodyDual}<p>Si crees que es un error, contacta a soporte.</p><p>PetConnect</p>`
 			});
@@ -265,12 +277,17 @@ async function rejectProvider(req, res, next) {
 async function suspendProvider(req, res, next) {
 	try {
 		const reason = req.body?.reason != null ? String(req.body.reason).trim() : '';
+		if (reason.length > 2000) {
+			return res.status(400).json({ message: 'El motivo no puede superar 2000 caracteres' });
+		}
 
 		const user = await User.findById(req.params.userId);
 		if (!user) {
 			return res.status(404).json({ message: 'Usuario no encontrado' });
 		}
-		if (user.role !== 'proveedor') {
+		const hasProvider =
+			user.role === 'proveedor' || (Array.isArray(user.roles) && user.roles.includes('proveedor'));
+		if (!hasProvider) {
 			return res.status(400).json({ message: 'El usuario no es proveedor' });
 		}
 		if (user.status !== 'aprobado') {
@@ -308,7 +325,9 @@ async function reactivateProvider(req, res, next) {
 		if (!user) {
 			return res.status(404).json({ message: 'Usuario no encontrado' });
 		}
-		if (user.role !== 'proveedor') {
+		const hasProvider =
+			user.role === 'proveedor' || (Array.isArray(user.roles) && user.roles.includes('proveedor'));
+		if (!hasProvider) {
 			return res.status(400).json({ message: 'El usuario no es proveedor' });
 		}
 		if (user.status !== 'suspendido') {

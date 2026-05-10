@@ -12,16 +12,27 @@ function normalizeAccountStatus(status) {
 }
 
 /**
+ * @param {{ role?: string, roles?: string[] } | null | undefined} user
+ * @returns {boolean}
+ */
+function userHasProveedorRole(user) {
+	if (!user) return false;
+	const rs = Array.isArray(user.roles) && user.roles.length > 0 ? user.roles : [user.role];
+	return rs.includes('proveedor');
+}
+
+/**
  * Proveedor publicado: rol proveedor y estado explícitamente aprobado.
- * @param {{ role?: string, status?: string } | null | undefined} user
+ * @param {{ role?: string, roles?: string[], status?: string } | null | undefined} user
  * @returns {boolean}
  */
 function isProveedorAprobado(user) {
-	if (!user || user.role !== 'proveedor') return false;
+	if (!user || !userHasProveedorRole(user)) return false;
 	return normalizeAccountStatus(user.status) === 'aprobado';
 }
 
 module.exports = {
 	normalizeAccountStatus,
+	userHasProveedorRole,
 	isProveedorAprobado
 };

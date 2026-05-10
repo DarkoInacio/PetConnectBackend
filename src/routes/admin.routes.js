@@ -25,7 +25,7 @@ router.patch('/providers/:userId/suspend', auth, authorizeRoles('administrador')
 router.patch('/providers/:userId/reactivate', auth, authorizeRoles('administrador'), reactivateProvider);
 router.get('/audit-logs', auth, authorizeRoles('administrador'), listAuditLogs);
 
-router.get('/review-reports', auth, authorizeRoles('admin'), listReports);
-router.patch('/review-reports/:reportId', auth, authorizeRoles('admin'), decideReport);
+router.get('/review-reports', auth, authorizeRoles('administrador'), listReports);
+router.patch('/review-reports/:reportId', auth, authorizeRoles('administrador'), decideReport);
 
 module.exports = router;

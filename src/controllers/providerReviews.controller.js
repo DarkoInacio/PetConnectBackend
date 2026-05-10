@@ -3,7 +3,12 @@
 const mongoose = require('mongoose');
 const User = require('../models/User');
 const Review = require('../models/Review');
-const { activeReviewMatch, getRatingSummary, formatReviewsForPublic } = require('../services/providerRating.service');
+const {
+	activeReviewMatch,
+	getRatingSummary,
+	formatReviewsForPublic,
+	getObservationText
+} = require('../services/providerRating.service');
 const { providerDisplayName } = require('../utils/notifyReview');
 
 /**
@@ -77,7 +82,7 @@ async function listProviderOwnReviews(req, res, next) {
 			return res.status(400).json({ message: 'Sesión de proveedor inválida' });
 		}
 
-		const match = matchClientToProviderOnProvider(providerId);
+		const match = activeReviewMatch(providerId);
 		const sort =
 			(req.query.prioridad && String(req.query.prioridad).toLowerCase()) === 'recientes'
 				? { createdAt: -1 }

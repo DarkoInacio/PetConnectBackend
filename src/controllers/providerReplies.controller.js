@@ -5,29 +5,74 @@ const Review = require('../models/Review');
 const User = require('../models/User');
 const { canProviderEditReply } = require('../services/reviewRules.service');
 const { REVIEW_REPLY_MAX } = require('../models/Review');
-const { syncProviderRatingToUser, getRatingSummary, getRecentReviews, formatReviewsForPublic } = require('../services/providerRating.service');
+const {
+	getObservationText,
+	getRatingSummary
+} = require('../services/providerRating.service');
 const { notifyOwnerProviderRepliedToReview, providerDisplayName } = require('../utils/notifyReview');
 
 /**
  * GET /api/provider/reviews
- * orden: sin_responder primero (query ?prioridad=pendientes, default)
+ * Query:
+ * - prioridad: recientes (default) | pendientes — si pendientes, sin responder primero; si no, solo cronológico descendente
+ * - estado: todos (default) | sin_respuesta | con_respuesta
+ * - rating: 1–5 opcional
  */
 async function listProviderReviewsForMe(req, res, next) {
 	try {
 		const providerId = req.user.id;
-		const prioridadPendientes = String(req.query.prioridad || 'pendientes') === 'pendientes';
+		const prioridadPendientes = String(req.query.prioridad || 'recientes').toLowerCase() === 'pendientes';
+		const estado = String(req.query.estado || 'todos').toLowerCase();
+
+		let ratingFilter = null;
+		if (req.query.rating !== undefined && req.query.rating !== '') {
+			const n = Number(req.query.rating);
+			if (Number.isInteger(n) && n >= 1 && n <= 5) {
+				ratingFilter = n;
+			}
+		}
+
 		const q = { providerId, removedByAdmin: { $ne: true } };
-		const cursor = Review.find(q)
-			.populate('ownerId', 'name lastName email')
-			.lean();
-		const docs = await cursor;
+		if (ratingFilter != null) {
+			q.rating = ratingFilter;
+		}
+		if (estado === 'sin_respuesta') {
+			q.$or = [
+				{ providerReply: { $exists: false } },
+				{ 'providerReply.text': { $exists: false } },
+				{ 'providerReply.text': null },
+				{ 'providerReply.text': '' }
+			];
+		} else if (estado === 'con_respuesta') {
+			q['providerReply.text'] = { $regex: /\S/ };
+		}
+
+		const [docs, ratingSummary] = await Promise.all([
+			Review.find(q)
+				.populate('ownerId', 'name lastName email')
+				.sort({ createdAt: -1 })
+				.limit(500)
+				.lean(),
+			getRatingSummary(providerId)
+		]);
+
 		const withState = docs.map((d) => {
-			const hasReply = d.providerReply && d.providerReply.text;
+			const hasReply = Boolean(d.providerReply && String(d.providerReply.text || '').trim() !== '');
+			const textObs = getObservationText(d);
 			return {
-				...d,
+				_id: d._id,
+				rating: d.rating,
+				comment: textObs,
+				observation: textObs,
+				createdAt: d.createdAt,
+				ownerId: d.ownerId
+					? { _id: d.ownerId._id || d.ownerId, name: d.ownerId.name, lastName: d.ownerId.lastName }
+					: null,
+				providerReply: d.providerReply,
 				estadoRespuesta: hasReply ? 'respondida' : 'sin_responder'
 			};
 		});
+
 		if (prioridadPendientes) {
 			withState.sort((a, b) => {
 				const ap = a.estadoRespuesta === 'sin_responder' ? 0 : 1;
@@ -35,10 +80,13 @@ async function listProviderReviewsForMe(req, res, next) {
 				if (ap !== bp) return ap - bp;
 				return new Date(b.createdAt) - new Date(a.createdAt);
 			});
-		} else {
-			withState.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 		}
-		return res.status(200).json({ reviews: withState, total: withState.length });
+
+		return res.status(200).json({
+			reviews: withState,
+			total: withState.length,
+			ratingSummary
+		});
 	} catch (e) {
 		next(e);
 	}

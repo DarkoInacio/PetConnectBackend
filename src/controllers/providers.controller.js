@@ -383,6 +383,7 @@ async function listApprovedProviders(req, res, next) {
 
 		const filter = {
 			status: 'aprobado',
+			'providerProfile.isPublished': { $ne: false },
 			$and: [{ $or: [{ role: 'proveedor' }, { roles: 'proveedor' }] }]
 		};
 		if (tipo !== undefined && String(tipo).trim()) {

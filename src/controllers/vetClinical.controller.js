@@ -7,7 +7,7 @@ const Appointment = require('../models/Appointment');
 const Pet = require('../models/Pet');
 const ClinicalEncounter = require('../models/ClinicalEncounter');
 const User = require('../models/User');
-const { assertVetAppointmentForPet } = require('../services/petAccess.service');
+const { assertVetAppointmentForPet, vetHasAccessToPet } = require('../services/petAccess.service');
 const { uploadsRoot } = require('../config/uploads');
 
 const LATE_CREATE_MS = 72 * 60 * 60 * 1000;
@@ -281,6 +281,128 @@ async function updateClinicalEncounter(req, res, next) {
 	}
 }
 
+async function listVetClinicalEncounters(req, res, next) {
+	try {
+		const { petId } = req.params;
+		if (!mongoose.isValidObjectId(petId)) {
+			return res.status(400).json({ message: 'petId invalido' });
+		}
+		const pet = await Pet.findById(petId).lean();
+		if (!pet) {
+			return res.status(404).json({ message: 'Mascota no encontrada' });
+		}
+		const canAccess = await vetHasAccessToPet(req.user.id, petId);
+		if (!canAccess) {
+			return res.status(403).json({ message: 'No autorizado' });
+		}
+
+		const encounters = await ClinicalEncounter.find({ petId, providerId: req.user.id })
+			.sort({ occurredAt: -1 })
+			.lean();
+
+		const items = encounters.map((e) => ({
+			id: e._id,
+			type: e.type,
+			occurredAt: e.occurredAt,
+			motivo: e.motivo,
+			diagnosticoResumen: (e.diagnostico || '').slice(0, 160),
+			veterinaria: '',
+			attachmentCount: (e.attachments || []).length
+		}));
+
+		return res.status(200).json({ encounters: items });
+	} catch (err) {
+		next(err);
+	}
+}
+
+async function getVetClinicalEncounterDetail(req, res, next) {
+	try {
+		const { petId, encounterId } = req.params;
+		if (!mongoose.isValidObjectId(petId) || !mongoose.isValidObjectId(encounterId)) {
+			return res.status(400).json({ message: 'Id invalido' });
+		}
+		const pet = await Pet.findById(petId).lean();
+		if (!pet) {
+			return res.status(404).json({ message: 'Mascota no encontrada' });
+		}
+		const canAccess = await vetHasAccessToPet(req.user.id, petId);
+		if (!canAccess) {
+			return res.status(403).json({ message: 'No autorizado' });
+		}
+
+		const enc = await ClinicalEncounter.findOne({
+			_id: encounterId,
+			petId,
+			providerId: req.user.id
+		})
+			.populate('providerId', 'name lastName email')
+			.lean();
+		if (!enc) {
+			return res.status(404).json({ message: 'Atencion no encontrada' });
+		}
+
+		const encounter = {
+			...enc,
+			attachments: (enc.attachments || []).map((a, i) => ({
+				...a,
+				name: a.originalName || '',
+				index: i
+			}))
+		};
+
+		return res.status(200).json({ encounter });
+	} catch (err) {
+		next(err);
+	}
+}
+
+async function downloadVetEncounterAttachment(req, res, next) {
+	try {
+		const { petId, encounterId, index } = req.params;
+		const idx = Number(index);
+		if (!mongoose.isValidObjectId(petId) || !mongoose.isValidObjectId(encounterId)) {
+			return res.status(400).json({ message: 'Id invalido' });
+		}
+		if (!Number.isInteger(idx) || idx < 0) {
+			return res.status(400).json({ message: 'Indice invalido' });
+		}
+
+		const pet = await Pet.findById(petId).lean();
+		if (!pet) {
+			return res.status(404).json({ message: 'Mascota no encontrada' });
+		}
+		const canAccess = await vetHasAccessToPet(req.user.id, petId);
+		if (!canAccess) {
+			return res.status(403).json({ message: 'No autorizado' });
+		}
+
+		const enc = await ClinicalEncounter.findOne({
+			_id: encounterId,
+			petId,
+			providerId: req.user.id
+		}).lean();
+		if (!enc || !enc.attachments || !enc.attachments[idx]) {
+			return res.status(404).json({ message: 'Adjunto no encontrado' });
+		}
+		const att = enc.attachments[idx];
+		const relPath = att.filename.startsWith('clinical/') ? att.filename : `clinical/${att.filename}`;
+		const abs = path.join(uploadsRoot, relPath);
+		if (!fs.existsSync(abs)) {
+			return res.status(404).json({ message: 'Archivo no encontrado' });
+		}
+		res.setHeader('Content-Type', att.mime || 'application/octet-stream');
+		res.setHeader(
+			'Content-Disposition',
+			`attachment; filename="${encodeURIComponent(att.originalName || 'adjunto')}"`
+		);
+		res.setHeader('Cache-Control', 'private, no-store');
+		return fs.createReadStream(abs).pipe(res);
+	} catch (err) {
+		next(err);
+	}
+}
+
 async function addRetractionComment(req, res, next) {
 	try {
 		const { encounterId } = req.params;
@@ -333,5 +455,8 @@ async function addRetractionComment(req, res, next) {
 module.exports = {
 	createClinicalEncounter,
 	updateClinicalEncounter,
-	addRetractionComment
+	addRetractionComment,
+	listVetClinicalEncounters,
+	getVetClinicalEncounterDetail,
+	downloadVetEncounterAttachment
 };

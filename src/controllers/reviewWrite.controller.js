@@ -2,7 +2,6 @@
 
 const mongoose = require('mongoose');
 const Review = require('../models/Review');
-const { REVIEW_DIRECTIONS } = Review;
 const { syncProviderRatingToUser, getObservationText } = require('../services/providerRating.service');
 
 const EDIT_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -58,11 +57,7 @@ async function updateReview(req, res, next) {
 		}
 
 		const uid = String(req.user.id);
-		const dir = review.direction || REVIEW_DIRECTIONS.CLIENT_TO_PROVIDER;
-		const isClientReview =
-			dir === REVIEW_DIRECTIONS.CLIENT_TO_PROVIDER && String(review.ownerId) === uid;
-		const isProviderToClient = dir === REVIEW_DIRECTIONS.PROVIDER_TO_CLIENT && String(review.providerId) === uid;
-		if (!isClientReview && !isProviderToClient) {
+		if (String(review.ownerId) !== uid) {
 			return res.status(403).json({ message: 'No eres el autor de esta reseña' });
 		}
 
@@ -74,9 +69,7 @@ async function updateReview(req, res, next) {
 		}
 		await review.save();
 
-		if (dir !== REVIEW_DIRECTIONS.PROVIDER_TO_CLIENT) {
-			await syncProviderRatingToUser(review.providerId);
-		}
+		await syncProviderRatingToUser(review.providerId);
 
 		return res.status(200).json({
 			message: 'Reseña actualizada',
