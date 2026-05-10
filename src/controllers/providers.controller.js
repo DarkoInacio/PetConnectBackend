@@ -18,7 +18,14 @@ const ClinicService = require('../models/ClinicService');
 const { parseHHMM } = require('../utils/vetAgendaSlots');
 const { ensureDefaultClinicService } = require('../utils/clinicService.util');
 
-const PRIVATE_PROFILE_KEYS = new Set(['rejectionReason', 'reviewedAt', 'reviewedBy']);
+const PRIVATE_PROFILE_KEYS = new Set([
+	'rejectionReason',
+	'reviewedAt',
+	'reviewedBy',
+	'adminSuspendedAt',
+	'adminSuspendedBy',
+	'adminSuspendReason'
+]);
 const DEFAULT_MAP_CENTER = {
 	lat: -33.4489,
 	lng: -70.6693,

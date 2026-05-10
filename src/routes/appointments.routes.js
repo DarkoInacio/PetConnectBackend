@@ -5,6 +5,7 @@ const router = express.Router();
 
 const auth = require('../middlewares/auth');
 const { authorizeRoles } = require('../middlewares/roles');
+const ensureVeterinariaProvider = require('../middlewares/ensureVeterinariaProvider');
 const {
 	listAvailableSlotsByProvider,
 	createAppointment,
@@ -34,5 +35,17 @@ router.patch('/:id/provider/complete-walker', auth, authorizeRoles('proveedor'),
 router.patch('/:id/provider/complete-visit', auth, authorizeRoles('proveedor'), completeProviderVisit);
 router.patch('/:id/provider/cancel', auth, authorizeRoles('proveedor'), cancelProviderAppointment);
 router.patch('/:id/cancel', auth, authorizeRoles('dueno'), cancelMyAppointment);
+
+router.patch('/:id/provider/confirm', auth, authorizeRoles('proveedor'), confirmAppointmentAsProvider);
+router.patch('/:id/provider/cancel', auth, authorizeRoles('proveedor'), cancelAppointmentAsProvider);
+router.patch('/:id/provider/complete-vet', auth, authorizeRoles('proveedor'), completeVetClinicAppointmentAsProvider);
+router.patch('/:id/provider/complete-walker', auth, authorizeRoles('proveedor'), completeWalkerAppointmentAsProvider);
+router.patch(
+	'/:id/provider/internal-notes',
+	auth,
+	authorizeRoles('proveedor'),
+	ensureVeterinariaProvider,
+	patchAppointmentInternalNotes
+);
 
 module.exports = router;

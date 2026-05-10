@@ -46,6 +46,10 @@ const appointmentSchema = new mongoose.Schema(
 			default: 'availability_slot',
 			index: true
 		},
+		petId: {
+			type: mongoose.Schema.Types.ObjectId,
+			index: true
+		},
 		startAt: {
 			type: Date,
 			required: true,
@@ -91,6 +95,12 @@ const appointmentSchema = new mongoose.Schema(
 			type: String,
 			trim: true,
 			maxlength: 200
+		},
+		internalNotes: {
+			type: String,
+			trim: true,
+			maxlength: 2000,
+			default: ''
 		}
 	},
 	{

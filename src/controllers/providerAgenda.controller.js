@@ -16,6 +16,13 @@ async function ensureApprovedProvider(userId) {
 	if (!provider || !eff.includes('proveedor')) {
 		return { ok: false, code: 403, message: 'Solo proveedores pueden gestionar agenda' };
 	}
+	if (provider.status === 'suspendido') {
+		return {
+			ok: false,
+			code: 403,
+			message: 'Tu cuenta está temporalmente desactivada por administración; no apareces en el mapa hasta regularizar.'
+		};
+	}
 	if (provider.status !== 'aprobado') {
 		return { ok: false, code: 403, message: 'Tu perfil debe estar aprobado para publicar agenda' };
 	}
