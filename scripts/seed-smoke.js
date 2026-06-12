@@ -9,6 +9,7 @@
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
+const { DateTime } = require('luxon');
 const mongoose = require('mongoose');
 const User = require('../src/models/User');
 const Pet = require('../src/models/Pet');
@@ -31,6 +32,7 @@ const SMOKE_VET = {
 };
 
 const SANTIAGO = { lat: -33.4489, lng: -70.6693 };
+const AGENDA_ZONE = process.env.AGENDA_TIMEZONE || 'America/Santiago';
 
 async function upsertUser({ email, password, name, lastName, role, roles, providerType, providerProfile, status }) {
 	const normalized = String(email).toLowerCase().trim();
@@ -61,9 +63,12 @@ async function upsertUser({ email, password, name, lastName, role, roles, provid
 }
 
 async function ensureSmokeSlot(providerId, clinicServiceId) {
-	const now = Date.now();
-	const startAt = new Date(now + 2 * 60 * 60 * 1000);
-	const endAt = new Date(startAt.getTime() + 30 * 60 * 1000);
+	// Mañana 10:00–10:30 (Chile), dentro de agendaSlotStart/End del vet smoke.
+	const startAt = DateTime.now()
+		.setZone(AGENDA_ZONE)
+		.plus({ days: 1 })
+		.set({ hour: 10, minute: 0, second: 0, millisecond: 0 });
+	const endAt = startAt.plus({ minutes: 30 });
 
 	await AvailabilitySlot.deleteMany({
 		providerId,
@@ -75,13 +80,13 @@ async function ensureSmokeSlot(providerId, clinicServiceId) {
 	return AvailabilitySlot.create({
 		providerId,
 		clinicServiceId,
-		startAt,
-		endAt,
+		startAt: startAt.toJSDate(),
+		endAt: endAt.toJSDate(),
 		status: 'available'
 	});
 }
 
-function buildCiEnvironment({ providerId, petId, clinicServiceId }) {
+function buildCiEnvironment({ providerId, petId, clinicServiceId, slotId }) {
 	const port = process.env.PORT || 3000;
 	const baseHost = process.env.SMOKE_BASE_HOST || `http://localhost:${port}`;
 
@@ -104,7 +109,7 @@ function buildCiEnvironment({ providerId, petId, clinicServiceId }) {
 			{ key: 'mapRadioKm', value: '15', type: 'default', enabled: true },
 			{ key: 'token_dueno', value: '', type: 'default', enabled: true },
 			{ key: 'token_vet', value: '', type: 'default', enabled: true },
-			{ key: 'slotId', value: '', type: 'default', enabled: true },
+			{ key: 'slotId', value: String(slotId), type: 'default', enabled: true },
 			{ key: 'appointmentId', value: '', type: 'default', enabled: true }
 		],
 		_postman_variable_scope: 'environment'
@@ -187,7 +192,8 @@ async function main() {
 	const env = buildCiEnvironment({
 		providerId: vet._id,
 		petId: pet._id,
-		clinicServiceId: clinicService._id
+		clinicServiceId: clinicService._id,
+		slotId: slot._id
 	});
 
 	const outPath = path.join(__dirname, '..', 'postman', 'PetConnect-CI.postman_environment.json');

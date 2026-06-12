@@ -253,7 +253,9 @@
                 "exec": [
                   "pm.test(\"Status OK\", () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));",
                   "const json = pm.response.json();",
-                  "if (json.slots && json.slots[0] && json.slots[0]._id) pm.environment.set(\"slotId\", json.slots[0]._id);"
+                  "const first = json.slots && json.slots[0];",
+                  "const sid = first && (first._id || first.id);",
+                  "if (sid) pm.environment.set(\"slotId\", String(sid));"
                 ]
               }
             }
@@ -1304,7 +1306,9 @@
                 "exec": [
                   "pm.test(\"Status OK\", () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));",
                   "const json = pm.response.json();",
-                  "if (json.slots && json.slots[0] && json.slots[0]._id) pm.environment.set(\"slotId\", json.slots[0]._id);"
+                  "const first = json.slots && json.slots[0];",
+                  "const sid = first && (first._id || first.id);",
+                  "if (sid) pm.environment.set(\"slotId\", String(sid));"
                 ]
               }
             }
