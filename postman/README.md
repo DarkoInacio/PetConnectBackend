@@ -25,8 +25,30 @@ Tras regenerar en frontend, copiar los JSON aquí.
 
 ## Newman
 
+### Local (manual)
+
+1. Levantar API: `npm run dev` o `npm start`
+2. Semilla smoke: `npm run seed:smoke` (genera `PetConnect-CI.postman_environment.json`)
+3. Ejecutar smoke:
+
 ```bash
-newman run postman/PetConnect.postman_collection.json \
-  -e postman/PetConnect-Local.postman_environment.json \
-  --folder Smoke
+npm run test:smoke
 ```
+
+O todo en uno (API ya debe estar corriendo):
+
+```bash
+npm run test:smoke:full
+```
+
+### CI (GitHub Actions)
+
+El workflow `.github/workflows/backend-tests.yml` ejecuta en cada PR/push a `main`:
+
+- **Jest** — 80+ tests unitarios e integración
+- **Newman Smoke** — carpeta `Smoke` con MongoDB + seed automático
+
+### Environment CI
+
+`postman/PetConnect-CI.postman_environment.json` se **regenera** con `npm run seed:smoke`.
+No editar IDs a mano; el script crea dueño, vet, mascota, servicio y slot.

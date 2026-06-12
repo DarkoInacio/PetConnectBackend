@@ -9,7 +9,13 @@
     "start": "node src/server.js",
     "start:prod": "NODE_ENV=production node src/server.js",
     "migrate:clinic-services": "node scripts/migrate-clinic-services.js",
-    "seed:admin": "node scripts/create-admin.js"
+    "seed:admin": "node scripts/create-admin.js",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "seed:smoke": "node scripts/seed-smoke.js",
+    "test:smoke": "newman run postman/PetConnect.postman_collection.json -e postman/PetConnect-CI.postman_environment.json --folder Smoke --reporters cli --color on --timeout-request 10000",
+    "test:smoke:full": "node scripts/run-smoke.js"
   },
   "keywords": [
     "node",
@@ -40,7 +46,11 @@
     "sharp": "^0.34.5"
   },
   "devDependencies": {
-    "nodemon": "^3.1.0"
+    "jest": "^29.7.0",
+    "mongodb-memory-server": "^10.1.4",
+    "newman": "^6.2.1",
+    "nodemon": "^3.1.0",
+    "supertest": "^7.0.0"
   },
   "engines": {
     "node": ">=18"

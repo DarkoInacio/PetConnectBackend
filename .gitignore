@@ -15,6 +15,10 @@ pids
 # Coverage
 coverage
 .nyc_output
+test/setup/globalConfig.json
+postman/PetConnect-CI.postman_environment.json
+postman/newman-results.xml
+server.pid
 
 # Dependency directories
 node_modules/
