@@ -18,6 +18,8 @@ const ClinicService = require('../src/models/ClinicService');
 const AvailabilitySlot = require('../src/models/AvailabilitySlot');
 const Appointment = require('../src/models/Appointment');
 const ClinicalEncounter = require('../src/models/ClinicalEncounter');
+const Review = require('../src/models/Review');
+const ReviewReport = require('../src/models/ReviewReport');
 
 const QA_PASSWORD = process.env.QA_DEFAULT_PASSWORD || 'QaTest2026!';
 const SANTIAGO = { lat: -33.4489, lng: -70.6693 };
@@ -181,7 +183,7 @@ async function ensureSlot(providerId, clinicServiceId) {
 	});
 }
 
-async function ensureCompletedAppointment({ owner, provider, pet }) {
+async function ensureCompletedAppointment({ owner, provider, pet, clinicService }) {
 	const existing = await Appointment.findOne({
 		ownerId: owner._id,
 		providerId: provider._id,
@@ -192,16 +194,72 @@ async function ensureCompletedAppointment({ owner, provider, pet }) {
 	if (existing) return existing;
 
 	const now = Date.now();
+	const startAt = new Date(now - 48 * 60 * 60 * 1000);
+	const endAt = new Date(now - 47 * 60 * 60 * 1000);
+
+	let histSlot = await AvailabilitySlot.findOne({
+		providerId: provider._id,
+		clinicServiceId: clinicService._id,
+		startAt
+	});
+	if (!histSlot) {
+		histSlot = await AvailabilitySlot.create({
+			providerId: provider._id,
+			clinicServiceId: clinicService._id,
+			startAt,
+			endAt,
+			status: 'blocked'
+		});
+	}
+
 	return Appointment.create({
 		ownerId: owner._id,
 		providerId: provider._id,
 		petId: pet._id,
+		clinicServiceId: clinicService._id,
+		slotId: histSlot._id,
 		bookingSource: 'availability_slot',
-		startAt: new Date(now - 48 * 60 * 60 * 1000),
-		endAt: new Date(now - 47 * 60 * 60 * 1000),
+		startAt,
+		endAt,
 		status: 'completed',
 		reason: 'Cita QA TCP-001'
 	});
+}
+
+async function ensureReview({ owner, provider, appointment }) {
+	let review = await Review.findOne({ appointmentId: appointment._id });
+	if (!review) {
+		review = await Review.findOne({ providerId: provider._id, ownerId: owner._id });
+	}
+	if (!review) {
+		review = await Review.create({
+			providerId: provider._id,
+			ownerId: owner._id,
+			appointmentId: appointment._id,
+			rating: 5,
+			observation: 'Excelente atención QA TCP-001'
+		});
+	}
+	return review;
+}
+
+async function ensureReviewReport({ review, reporter }) {
+	let report = await ReviewReport.findOne({ reviewId: review._id, reporterId: reporter._id });
+	if (!report) {
+		report = await ReviewReport.create({
+			reviewId: review._id,
+			reporterId: reporter._id,
+			reason: 'lenguaje_ofensivo',
+			status: 'pendiente'
+		});
+	} else if (report.status !== 'pendiente') {
+		report.status = 'pendiente';
+		report.adminId = undefined;
+		report.adminDecidedAt = undefined;
+		report.adminNote = '';
+		await report.save();
+	}
+	return report;
 }
 
 async function ensureEncounter({ pet, provider, appointment }) {
@@ -257,12 +315,17 @@ function buildQaEnvironment(ids) {
 		['slotId', ids.slotId],
 		['appointmentId', ids.appointmentId],
 		['encounterId', ids.encounterId],
+		['providerSlug', ids.providerSlug],
+		['reviewId', ids.reviewId],
+		['reportId', ids.reportId],
 		['mapLat', String(SANTIAGO.lat)],
 		['mapLng', String(SANTIAGO.lng)],
 		['mapRadioKm', '15'],
 		['token_dueno', ''],
 		['token_vet', ''],
-		['token_admin', '']
+		['token_admin', ''],
+		['token_dueno2', ''],
+		['resetToken', '']
 	];
 
 	return {
@@ -313,9 +376,24 @@ async function main() {
 	await Pet.deleteMany({ ownerId: dueno2._id });
 
 	const clinicService = await ensureClinicService(vet._id);
+
+	// Libera citas QA previas que consumieron slots en re-ejecuciones Postman
+	await Appointment.deleteMany({
+		ownerId: dueno1._id,
+		providerId: vet._id,
+		reason: { $regex: /Smoke test|Consulta general/i }
+	});
+
 	const slot = await ensureSlot(vet._id, clinicService._id);
-	const appointment = await ensureCompletedAppointment({ owner: dueno1, provider: vet, pet: firulais });
+	const appointment = await ensureCompletedAppointment({
+		owner: dueno1,
+		provider: vet,
+		pet: firulais,
+		clinicService
+	});
 	const encounter = await ensureEncounter({ pet: firulais, provider: vet, appointment });
+	const review = await ensureReview({ owner: dueno1, provider: vet, appointment });
+	const report = await ensureReviewReport({ review, reporter: dueno2 });
 
 	const env = buildQaEnvironment({
 		vetId: vet._id,
@@ -326,7 +404,10 @@ async function main() {
 		clinicServiceId: clinicService._id,
 		slotId: slot._id,
 		appointmentId: appointment._id,
-		encounterId: encounter._id
+		encounterId: encounter._id,
+		providerSlug: USERS.vet.providerProfile.publicSlug,
+		reviewId: review._id,
+		reportId: report._id
 	});
 
 	const outPath = path.join(__dirname, '..', 'postman', 'PetConnect-QA.postman_environment.json');
@@ -342,6 +423,9 @@ async function main() {
 	console.log('  cuidador:        ', cuidador.email, '(en_revision)');
 	console.log('  appointmentId:   ', appointment._id.toString());
 	console.log('  encounterId:     ', encounter._id.toString());
+	console.log('  providerSlug:    ', USERS.vet.providerProfile.publicSlug);
+	console.log('  reviewId:        ', review._id.toString());
+	console.log('  reportId:        ', report._id.toString());
 	console.log('  environment:     ', outPath);
 
 	await mongoose.disconnect();

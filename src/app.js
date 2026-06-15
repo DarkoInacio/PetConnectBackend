@@ -59,14 +59,24 @@ app.use(
 	})
 );
 
-// Rate limiting
-const apiLimiter = rateLimit({
-	windowMs: 15 * 60 * 1000,
-	max: 100,
-	standardHeaders: true,
-	legacyHeaders: false
-});
-app.use('/api', apiLimiter);
+// Rate limiting (100/15min en producción; desactivado en dev para Newman QA y pruebas locales)
+const rateLimitMax = Number(process.env.RATE_LIMIT_MAX);
+const apiRateLimit =
+	Number.isFinite(rateLimitMax) && rateLimitMax >= 0
+		? rateLimitMax
+		: process.env.NODE_ENV === 'production'
+			? 100
+			: 0;
+
+if (apiRateLimit > 0) {
+	const apiLimiter = rateLimit({
+		windowMs: 15 * 60 * 1000,
+		max: apiRateLimit,
+		standardHeaders: true,
+		legacyHeaders: false
+	});
+	app.use('/api', apiLimiter);
+}
 
 // Logger
 if (process.env.NODE_ENV !== 'production') {

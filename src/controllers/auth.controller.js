@@ -118,7 +118,8 @@ async function forgotPassword(req, res, next) {
 		if (!email) {
 			return res.status(400).json({ message: 'Email es obligatorio' });
 		}
-		const user = await User.findOne({ email });
+		const normalizedEmail = String(email).toLowerCase().trim();
+		const user = await User.findOne({ email: normalizedEmail });
 		if (!user) {
 			// Para evitar enumeración de usuarios, respondemos igual
 			return res.status(200).json({ message: 'Si el correo existe, enviaremos instrucciones' });
@@ -174,9 +175,10 @@ async function resetPassword(req, res, next) {
 		if (!email || !token || !newPassword) {
 			return res.status(400).json({ message: 'Campos obligatorios: email, token, newPassword' });
 		}
+		const normalizedEmail = String(email).toLowerCase().trim();
 		const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
 		const user = await User.findOne({
-			email,
+			email: normalizedEmail,
 			passwordResetToken: tokenHash,
 			passwordResetExpires: { $gt: new Date() }
 		}).select('+password');

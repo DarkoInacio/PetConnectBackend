@@ -6,6 +6,7 @@ const host = process.env.SMOKE_BASE_HOST || `http://localhost:${process.env.PORT
 const healthUrl = new URL('/health', host);
 const maxAttempts = Number(process.env.HEALTH_WAIT_ATTEMPTS || 30);
 const delayMs = Number(process.env.HEALTH_WAIT_DELAY_MS || 1000);
+const stableChecks = Number(process.env.HEALTH_STABLE_CHECKS || 0);
 
 function sleep(ms) {
 	return new Promise((resolve) => setTimeout(resolve, ms));
@@ -43,12 +44,21 @@ function ping() {
 }
 
 async function main() {
+	let consecutive = 0;
+
 	for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
 		try {
 			await ping();
-			console.log(`Health OK (${healthUrl})`);
+			consecutive += 1;
+			if (stableChecks > 0 && consecutive < stableChecks) {
+				await sleep(delayMs);
+				continue;
+			}
+			const stableNote = stableChecks > 1 ? ` (${consecutive} checks estables)` : '';
+			console.log(`Health OK (${healthUrl})${stableNote}`);
 			return;
 		} catch (err) {
+			consecutive = 0;
 			if (attempt === maxAttempts) {
 				console.error(`Health check falló tras ${maxAttempts} intentos:`, err.message);
 				process.exit(1);

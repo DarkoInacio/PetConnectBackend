@@ -16,7 +16,9 @@
     "seed:smoke": "node scripts/seed-smoke.js",
     "seed:qa": "node scripts/seed-qa.js",
     "test:smoke": "newman run postman/PetConnect.postman_collection.json -e postman/PetConnect-CI.postman_environment.json --folder Smoke --reporters cli --color on --timeout-request 10000",
-    "test:smoke:full": "node scripts/run-smoke.js"
+    "test:smoke:full": "node scripts/run-smoke.js",
+    "test:qa": "node scripts/run-qa-newman.js",
+    "test:qa:full": "node scripts/run-qa.js"
   },
   "keywords": [
     "node",

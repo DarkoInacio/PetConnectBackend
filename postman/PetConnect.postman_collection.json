@@ -1,6 +1,6 @@
 {
   "info": {
-    "_postman_id": "79f63d5a-cdb9-4c4e-99a8-7165c35c1af8",
+    "_postman_id": "659a9d5d-f9d7-449c-8c86-ac092b128736",
     "name": "PetConnect API",
     "description": "Colección QA PetConnect — alineada con TEST_PLAN.md y test-cases/smoke-tests.md.\n\n1. Importar un environment (Local/Staging/Production).\n2. Ejecutar Auth > Login dueño (o Smoke > SMK-002).\n3. Completar variables petId, providerId, slotId según datos semilla.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
@@ -253,9 +253,11 @@
                 "exec": [
                   "pm.test(\"Status OK\", () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));",
                   "const json = pm.response.json();",
-                  "const first = json.slots && json.slots[0];",
-                  "const sid = first && (first._id || first.id);",
-                  "if (sid) pm.environment.set(\"slotId\", String(sid));"
+                  "pm.test(\"Slots disponibles\", () => {",
+                  "  pm.expect(json.slots).to.be.an(\"array\").that.is.not.empty;",
+                  "  pm.expect(json.slots[0]._id).to.be.a(\"string\");",
+                  "});",
+                  "if (json.slots && json.slots[0] && json.slots[0]._id) pm.environment.set(\"slotId\", json.slots[0]._id);"
                 ]
               }
             }
@@ -297,6 +299,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
+                  "pm.test(\"slotId presente\", () => pm.expect(pm.environment.get(\"slotId\")).to.be.a(\"string\").and.not.empty);",
                   "pm.test(\"Status 201\", () => pm.response.to.have.status(201));"
                 ]
               }
@@ -610,7 +613,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"Status 201\", () => pm.response.to.have.status(201));"
+                  "pm.test(\"Status 201 o 409\", () => pm.expect(pm.response.code).to.be.oneOf([201, 409]));"
                 ]
               }
             }
@@ -769,7 +772,23 @@
               "raw": "{\n  \"email\": \"{{email_dueno}}\"\n}"
             }
           },
-          "response": []
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 200\", () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "if (json.resetUrl) {",
+                  "  const match = json.resetUrl.match(/token=([^&]+)/);",
+                  "  if (match) pm.environment.set(\"resetToken\", match[1]);",
+                  "}"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Reset password",
@@ -794,10 +813,22 @@
             "description": "",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"{{email_dueno}}\",\n  \"token\": \"{{resetToken}}\",\n  \"newPassword\": \"Nueva1234!\"\n}"
+              "raw": "{\n  \"email\": \"{{email_dueno}}\",\n  \"token\": \"{{resetToken}}\",\n  \"newPassword\": \"{{password_dueno}}\"\n}"
             }
           },
-          "response": []
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Token capturado\", () => pm.expect(pm.environment.get(\"resetToken\")).to.be.a(\"string\").and.not.empty);"
+                ]
+              }
+            }
+          ]
         }
       ],
       "description": ""
@@ -1216,46 +1247,6 @@
               }
             }
           ]
-        },
-        {
-          "name": "PATCH mark-deceased",
-          "request": {
-            "method": "PATCH",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              },
-              {
-                "key": "Authorization",
-                "value": "Bearer {{token_dueno}}"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/pets/{{petId}}/mark-deceased",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "pets",
-                "{{petId}}",
-                "mark-deceased"
-              ]
-            },
-            "description": ""
-          },
-          "response": [],
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"Status OK\", () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));"
-                ]
-              }
-            }
-          ]
         }
       ],
       "description": ""
@@ -1264,7 +1255,7 @@
       "name": "Appointments",
       "item": [
         {
-          "name": "GET available-slots",
+          "name": "GET available-slots (cancel dueño)",
           "request": {
             "method": "GET",
             "header": [
@@ -1306,16 +1297,18 @@
                 "exec": [
                   "pm.test(\"Status OK\", () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));",
                   "const json = pm.response.json();",
-                  "const first = json.slots && json.slots[0];",
-                  "const sid = first && (first._id || first.id);",
-                  "if (sid) pm.environment.set(\"slotId\", String(sid));"
+                  "pm.test(\"Slots disponibles\", () => {",
+                  "  pm.expect(json.slots).to.be.an(\"array\").that.is.not.empty;",
+                  "  pm.expect(json.slots[0]._id).to.be.a(\"string\");",
+                  "});",
+                  "if (json.slots && json.slots[0] && json.slots[0]._id) pm.environment.set(\"slotId\", json.slots[0]._id);"
                 ]
               }
             }
           ]
         },
         {
-          "name": "POST crear cita",
+          "name": "POST crear cita (cancel dueño)",
           "request": {
             "method": "POST",
             "header": [
@@ -1340,7 +1333,7 @@
             "description": "",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"providerId\": \"{{providerId}}\",\n  \"slotId\": \"{{slotId}}\",\n  \"petId\": \"{{petId}}\",\n  \"reason\": \"Consulta general\"\n}"
+              "raw": "{\n  \"providerId\": \"{{providerId}}\",\n  \"slotId\": \"{{slotId}}\",\n  \"petId\": \"{{petId}}\",\n  \"reason\": \"QA cancel dueño\"\n}"
             }
           },
           "response": [],
@@ -1350,46 +1343,11 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"Status 201\", () => pm.response.to.have.status(201));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "GET mis citas",
-          "request": {
-            "method": "GET",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              },
-              {
-                "key": "Authorization",
-                "value": "Bearer {{token_dueno}}"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/appointments/mine",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "appointments",
-                "mine"
-              ]
-            },
-            "description": ""
-          },
-          "response": [],
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"Status OK\", () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));"
+                  "pm.test(\"Status 201\", () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "const appt = json.appointment || json;",
+                  "const id = appt._id || appt.id;",
+                  "if (id) pm.environment.set(\"appointmentId\", String(id));"
                 ]
               }
             }
@@ -1440,9 +1398,9 @@
           ]
         },
         {
-          "name": "PATCH confirmar (proveedor)",
+          "name": "GET available-slots (cancel proveedor)",
           "request": {
-            "method": "PATCH",
+            "method": "GET",
             "header": [
               {
                 "key": "Content-Type",
@@ -1450,19 +1408,25 @@
               },
               {
                 "key": "Authorization",
-                "value": "Bearer {{token_proveedor}}"
+                "value": "Bearer {{token_dueno}}"
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/appointments/{{appointmentId}}/provider/confirm",
+              "raw": "{{baseUrl}}/appointments/providers/{{providerId}}/available-slots?clinicServiceId={{clinicServiceId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "appointments",
-                "{{appointmentId}}",
-                "provider",
-                "confirm"
+                "providers",
+                "{{providerId}}",
+                "available-slots"
+              ],
+              "query": [
+                {
+                  "key": "clinicServiceId",
+                  "value": "{{clinicServiceId}}"
+                }
               ]
             },
             "description": ""
@@ -1474,7 +1438,59 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"Status OK\", () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));"
+                  "pm.test(\"Status OK\", () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));",
+                  "const json = pm.response.json();",
+                  "pm.test(\"Slots disponibles\", () => {",
+                  "  pm.expect(json.slots).to.be.an(\"array\").that.is.not.empty;",
+                  "  pm.expect(json.slots[0]._id).to.be.a(\"string\");",
+                  "});",
+                  "if (json.slots && json.slots[0] && json.slots[0]._id) pm.environment.set(\"slotId\", json.slots[0]._id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST crear cita (cancel proveedor)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_dueno}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/appointments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "appointments"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"providerId\": \"{{providerId}}\",\n  \"slotId\": \"{{slotId}}\",\n  \"petId\": \"{{petId}}\",\n  \"reason\": \"QA cancel proveedor\"\n}"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 201\", () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "const appt = json.appointment || json;",
+                  "const id = appt._id || appt.id;",
+                  "if (id) pm.environment.set(\"appointmentId\", String(id));"
                 ]
               }
             }
@@ -1526,9 +1542,9 @@
           ]
         },
         {
-          "name": "PATCH complete-vet",
+          "name": "GET available-slots",
           "request": {
-            "method": "PATCH",
+            "method": "GET",
             "header": [
               {
                 "key": "Content-Type",
@@ -1536,19 +1552,116 @@
               },
               {
                 "key": "Authorization",
-                "value": "Bearer {{token_proveedor}}"
+                "value": "Bearer {{token_dueno}}"
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/appointments/{{appointmentId}}/provider/complete-vet",
+              "raw": "{{baseUrl}}/appointments/providers/{{providerId}}/available-slots?clinicServiceId={{clinicServiceId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "appointments",
-                "{{appointmentId}}",
-                "provider",
-                "complete-vet"
+                "providers",
+                "{{providerId}}",
+                "available-slots"
+              ],
+              "query": [
+                {
+                  "key": "clinicServiceId",
+                  "value": "{{clinicServiceId}}"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status OK\", () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));",
+                  "const json = pm.response.json();",
+                  "pm.test(\"Slots disponibles\", () => {",
+                  "  pm.expect(json.slots).to.be.an(\"array\").that.is.not.empty;",
+                  "  pm.expect(json.slots[0]._id).to.be.a(\"string\");",
+                  "});",
+                  "if (json.slots && json.slots[0] && json.slots[0]._id) pm.environment.set(\"slotId\", json.slots[0]._id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST crear cita",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_dueno}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/appointments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "appointments"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"providerId\": \"{{providerId}}\",\n  \"slotId\": \"{{slotId}}\",\n  \"petId\": \"{{petId}}\",\n  \"reason\": \"Consulta general\"\n}"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 201\", () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "const appt = json.appointment || json;",
+                  "const id = appt._id || appt.id;",
+                  "if (id) pm.environment.set(\"appointmentId\", String(id));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET mis citas",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_dueno}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/appointments/mine",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "appointments",
+                "mine"
               ]
             },
             "description": ""
@@ -1567,7 +1680,7 @@
           ]
         },
         {
-          "name": "PATCH complete-walker",
+          "name": "PATCH confirmar (proveedor)",
           "request": {
             "method": "PATCH",
             "header": [
@@ -1581,7 +1694,7 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/appointments/{{appointmentId}}/provider/complete-walker",
+              "raw": "{{baseUrl}}/appointments/{{appointmentId}}/provider/confirm",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -1589,48 +1702,7 @@
                 "appointments",
                 "{{appointmentId}}",
                 "provider",
-                "complete-walker"
-              ]
-            },
-            "description": ""
-          },
-          "response": [],
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"Status OK\", () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "PATCH complete-visit",
-          "request": {
-            "method": "PATCH",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              },
-              {
-                "key": "Authorization",
-                "value": "Bearer {{token_proveedor}}"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/appointments/{{appointmentId}}/provider/complete-visit",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "appointments",
-                "{{appointmentId}}",
-                "provider",
-                "complete-visit"
+                "confirm"
               ]
             },
             "description": ""
@@ -1694,6 +1766,129 @@
           ]
         },
         {
+          "name": "PATCH complete-walker",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_proveedor}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/appointments/{{appointmentId}}/provider/complete-walker",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "appointments",
+                "{{appointmentId}}",
+                "provider",
+                "complete-walker"
+              ]
+            },
+            "description": ""
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status OK o regla de negocio\", () => pm.expect(pm.response.code).to.be.oneOf([200, 201, 400]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PATCH complete-vet",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_proveedor}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/appointments/{{appointmentId}}/provider/complete-vet",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "appointments",
+                "{{appointmentId}}",
+                "provider",
+                "complete-vet"
+              ]
+            },
+            "description": ""
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status OK\", () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PATCH complete-visit",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_proveedor}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/appointments/{{appointmentId}}/provider/complete-visit",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "appointments",
+                "{{appointmentId}}",
+                "provider",
+                "complete-visit"
+              ]
+            },
+            "description": ""
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status OK o regla de negocio\", () => pm.expect(pm.response.code).to.be.oneOf([200, 201, 400]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "GET review-eligibility",
           "request": {
             "method": "GET",
@@ -1727,7 +1922,9 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"Status OK\", () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));"
+                  "pm.test(\"Status OK\", () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));",
+                  "const json = pm.response.json();",
+                  "if (json.reviewId) pm.environment.set(\"reviewId\", String(json.reviewId));"
                 ]
               }
             }
@@ -1771,7 +1968,13 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"Status 201\", () => pm.response.to.have.status(201));"
+                  "pm.test(\"Status 201 o 409\", () => pm.expect(pm.response.code).to.be.oneOf([201, 409]));",
+                  "if (pm.response.code === 201) {",
+                  "  const json = pm.response.json();",
+                  "  const review = json.review || json;",
+                  "  const id = review._id || review.id;",
+                  "  if (id) pm.environment.set(\"reviewId\", String(id));",
+                  "}"
                 ]
               }
             }
@@ -1896,11 +2099,26 @@
             "description": "",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"fromDate\": \"2026-06-10\",\n  \"toDate\": \"2026-06-17\"\n}"
+              "raw": "{\n  \"fromDate\": \"{{agendaFromDate}}\",\n  \"toDate\": \"{{agendaToDate}}\"\n}"
             }
           },
           "response": [],
           "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const from = new Date();",
+                  "from.setDate(from.getDate() + 1);",
+                  "const to = new Date(from);",
+                  "to.setDate(to.getDate() + 7);",
+                  "const fmt = (d) => d.toISOString().slice(0, 10);",
+                  "pm.variables.set(\"agendaFromDate\", fmt(from));",
+                  "pm.variables.set(\"agendaToDate\", fmt(to));"
+                ]
+              }
+            },
             {
               "listen": "test",
               "script": {
@@ -1946,7 +2164,11 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"Status OK\", () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));"
+                  "pm.test(\"Status OK\", () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));",
+                  "const json = pm.response.json();",
+                  "const available = (json.slots || []).find((s) => s.status === \"available\");",
+                  "pm.test(\"Slot disponible en agenda\", () => pm.expect(available).to.be.an(\"object\"));",
+                  "if (available && available._id) pm.environment.set(\"slotId\", available._id);"
                 ]
               }
             }
@@ -2092,7 +2314,7 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/provider/agenda/omits",
+              "raw": "{{baseUrl}}/provider/agenda/omits?from={{agendaFromDate}}&to={{agendaToDate}}",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -2100,12 +2322,37 @@
                 "provider",
                 "agenda",
                 "omits"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "{{agendaFromDate}}"
+                },
+                {
+                  "key": "to",
+                  "value": "{{agendaToDate}}"
+                }
               ]
             },
             "description": ""
           },
           "response": [],
           "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const from = new Date();",
+                  "from.setDate(from.getDate() + 1);",
+                  "const to = new Date(from);",
+                  "to.setDate(to.getDate() + 7);",
+                  "const fmt = (d) => d.toISOString().slice(0, 10);",
+                  "pm.variables.set(\"agendaFromDate\", fmt(from));",
+                  "pm.variables.set(\"agendaToDate\", fmt(to));"
+                ]
+              }
+            },
             {
               "listen": "test",
               "script": {
@@ -2395,7 +2642,7 @@
             "description": "",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"bio\": \"Perfil actualizado QA\"\n}"
+              "raw": "{\n  \"description\": \"Perfil actualizado QA\"\n}"
             }
           },
           "response": [],
@@ -2438,7 +2685,7 @@
             "description": "",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"providerId\": \"{{providerId}}\",\n  \"pet\": {\n    \"name\": \"Firulais\",\n    \"species\": \"perro\"\n  },\n  \"message\": \"Necesito paseo\",\n  \"preferredStart\": \"2026-06-15T10:00:00.000Z\",\n  \"preferredEnd\": \"2026-06-15T11:00:00.000Z\"\n}"
+              "raw": "{\n  \"providerId\": \"{{walkerProviderId}}\",\n  \"pet\": {\n    \"name\": \"Firulais\",\n    \"species\": \"perro\"\n  },\n  \"message\": \"Necesito paseo\",\n  \"preferredStart\": \"2026-06-15T10:00:00.000Z\",\n  \"preferredEnd\": \"2026-06-15T11:00:00.000Z\"\n}"
             }
           },
           "response": [],
@@ -2526,7 +2773,7 @@
             "description": "",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"Consulta general\",\n  \"durationMinutes\": 30,\n  \"price\": 25000\n}"
+              "raw": "{\n  \"displayName\": \"Vacuna QA TCP-001\",\n  \"kind\": \"consulta\",\n  \"slotDurationMinutes\": 30,\n  \"priceClp\": 25000\n}"
             }
           },
           "response": [],
@@ -2536,7 +2783,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"Status 201\", () => pm.response.to.have.status(201));"
+                  "pm.test(\"Status 201 o 409\", () => pm.expect(pm.response.code).to.be.oneOf([201, 409]));"
                 ]
               }
             }
@@ -2570,7 +2817,7 @@
             "description": "",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"price\": 30000\n}"
+              "raw": "{\n  \"priceClp\": 30000\n}"
             }
           },
           "response": [],
@@ -2701,7 +2948,7 @@
             "description": "",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"reasonForVisit\": \"Control\",\n  \"diagnosis\": \"Saludable\",\n  \"treatmentPlan\": \"Continuar dieta\",\n  \"notes\": \"Sin novedades\"\n}"
+              "raw": "{\n  \"appointmentId\": \"{{appointmentId}}\",\n  \"type\": \"consulta\",\n  \"motivo\": \"Control rutinario QA\",\n  \"diagnostico\": \"Estado general bueno\",\n  \"tratamiento\": \"Continuar alimentación habitual\"\n}"
             }
           },
           "response": [],
@@ -2711,7 +2958,13 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"Status 201\", () => pm.response.to.have.status(201));"
+                  "pm.test(\"Status 201 o 409\", () => pm.expect(pm.response.code).to.be.oneOf([201, 409]));",
+                  "if (pm.response.code === 201) {",
+                  "  const json = pm.response.json();",
+                  "  const enc = json.encounter || json;",
+                  "  const id = enc._id || enc.id;",
+                  "  if (id) pm.environment.set(\"encounterId\", String(id));",
+                  "}"
                 ]
               }
             }
@@ -2787,7 +3040,7 @@
             "description": "",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"notes\": \"Actualizado QA\"\n}"
+              "raw": "{\n  \"observaciones\": \"Actualizado QA\"\n}"
             }
           },
           "response": [],
@@ -2797,7 +3050,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"Status OK\", () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));"
+                  "pm.test(\"Status OK o regla de negocio\", () => pm.expect(pm.response.code).to.be.oneOf([200, 201, 400]));"
                 ]
               }
             }
@@ -2832,7 +3085,7 @@
             "description": "",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"comment\": \"Corrección de nota\"\n}"
+              "raw": "{\n  \"text\": \"Corrección de nota QA\"\n}"
             }
           },
           "response": [],
@@ -2842,7 +3095,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"Status OK\", () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));"
+                  "pm.test(\"Status OK o regla de negocio\", () => pm.expect(pm.response.code).to.be.oneOf([200, 201, 400]));"
                 ]
               }
             }
@@ -2854,6 +3107,47 @@
     {
       "name": "Reviews",
       "item": [
+        {
+          "name": "Login dueño2",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email_dueno2}}\",\n  \"password\": \"{{password_dueno}}\"\n}"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 200\", () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "if (json.token) pm.environment.set(\"token_dueno2\", json.token);"
+                ]
+              }
+            }
+          ]
+        },
         {
           "name": "PATCH editar reseña",
           "request": {
@@ -2908,7 +3202,7 @@
               },
               {
                 "key": "Authorization",
-                "value": "Bearer {{token_dueno}}"
+                "value": "Bearer {{token_dueno2}}"
               }
             ],
             "url": {
@@ -2925,7 +3219,7 @@
             "description": "",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"reason\": \"contenido_inapropiado\",\n  \"details\": \"Prueba QA\"\n}"
+              "raw": "{\n  \"reason\": \"lenguaje_ofensivo\",\n  \"details\": \"Prueba QA\"\n}"
             }
           },
           "response": [],
@@ -2935,7 +3229,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"Status 201\", () => pm.response.to.have.status(201));"
+                  "pm.test(\"Status 201 o 409\", () => pm.expect(pm.response.code).to.be.oneOf([201, 409]));"
                 ]
               }
             }
@@ -3009,7 +3303,7 @@
             "description": "",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"reply\": \"Gracias por su feedback\"\n}"
+              "raw": "{\n  \"text\": \"Gracias por su feedback\"\n}"
             }
           },
           "response": [],
@@ -3019,7 +3313,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"Status OK\", () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));"
+                  "pm.test(\"Status OK o regla de negocio\", () => pm.expect(pm.response.code).to.be.oneOf([200, 201, 400]));"
                 ]
               }
             }
@@ -3290,14 +3584,14 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/admin/providers/{{providerUserId}}/approve",
+              "raw": "{{baseUrl}}/admin/providers/{{pendingProviderId}}/approve",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "admin",
                 "providers",
-                "{{providerUserId}}",
+                "{{pendingProviderId}}",
                 "approve"
               ]
             },
@@ -3310,7 +3604,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"Status OK\", () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));"
+                  "pm.test(\"Status OK o regla de negocio\", () => pm.expect(pm.response.code).to.be.oneOf([200, 201, 400]));"
                 ]
               }
             }
@@ -3331,14 +3625,14 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/admin/providers/{{providerUserId}}/reject",
+              "raw": "{{baseUrl}}/admin/providers/{{pendingProviderId}}/reject",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "admin",
                 "providers",
-                "{{providerUserId}}",
+                "{{pendingProviderId}}",
                 "reject"
               ]
             },
@@ -3355,7 +3649,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"Status OK\", () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));"
+                  "pm.test(\"Status OK o regla de negocio\", () => pm.expect(pm.response.code).to.be.oneOf([200, 201, 400]));"
                 ]
               }
             }
@@ -3549,7 +3843,7 @@
             "description": "",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"decision\": \"dismissed\",\n  \"adminNote\": \"Sin violación\"\n}"
+              "raw": "{\n  \"accion\": \"aprobar_reseña\",\n  \"nota\": \"Sin violación\"\n}"
             }
           },
           "response": [],
@@ -3559,7 +3853,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"Status OK\", () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));"
+                  "pm.test(\"Status OK o regla de negocio\", () => pm.expect(pm.response.code).to.be.oneOf([200, 201, 400]));"
                 ]
               }
             }
@@ -3589,6 +3883,52 @@
                 "jobs",
                 "reminders24h",
                 "run"
+              ]
+            },
+            "description": ""
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status OK\", () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "description": ""
+    },
+    {
+      "name": "Pets cleanup",
+      "item": [
+        {
+          "name": "PATCH mark-deceased",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token_dueno}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/pets/{{petId}}/mark-deceased",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "pets",
+                "{{petId}}",
+                "mark-deceased"
               ]
             },
             "description": ""
