@@ -29,7 +29,8 @@ Tras regenerar en frontend, copiar los JSON aquí.
 
 1. Levantar API: `npm run dev` o `npm start`
 2. Semilla smoke: `npm run seed:smoke` (genera `PetConnect-CI.postman_environment.json`)
-3. Ejecutar smoke:
+3. Semilla QA TCP-001: `npm run seed:qa` (genera `PetConnect-QA.postman_environment.json`)
+4. Ejecutar smoke:
 
 ```bash
 npm run test:smoke
@@ -51,4 +52,5 @@ El workflow `.github/workflows/backend-tests.yml` ejecuta en cada PR/push a `mai
 ### Environment CI
 
 `postman/PetConnect-CI.postman_environment.json` se **regenera** con `npm run seed:smoke`.
-No editar IDs a mano; el script crea dueño, vet, mascota, servicio y slot.
+`postman/PetConnect-QA.postman_environment.json` se **regenera** con `npm run seed:qa` (usuarios del anexo A TCP-001).
+No editar IDs a mano; los scripts crean dueño, vet, mascota, servicio y slot.

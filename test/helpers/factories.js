@@ -56,6 +56,20 @@ async function createProvider(overrides = {}) {
 }
 
 /** Veterinaria con ventana de agenda 09:00–18:00 (Chile). */
+async function createPendingProvider(overrides = {}) {
+	return createUser({
+		role: 'proveedor',
+		status: 'en_revision',
+		providerType: 'cuidador',
+		roles: ['proveedor'],
+		providerProfile: {
+			description: 'Proveedor pendiente de revisión',
+			isPublished: false
+		},
+		...overrides
+	});
+}
+
 async function createWalkerProvider(overrides = {}) {
 	return createUser({
 		role: 'proveedor',
@@ -232,6 +246,7 @@ module.exports = {
 	createProvider,
 	createVetProvider,
 	createWalkerProvider,
+	createPendingProvider,
 	createCompletedAppointment,
 	createClinicService,
 	createAvailableSlot,

@@ -9,7 +9,10 @@ const {
 	createBookingScenario,
 	createAvailableSlot,
 	createClinicService,
-	buildAuthHeader
+	buildAuthHeader,
+	createWalkerProvider,
+	createConfirmedAppointment,
+	createCompletedAppointment
 } = require('../../test/helpers/factories');
 
 async function bookAppointment(owner, { provider, pet, slot, status }) {
@@ -185,5 +188,88 @@ describe('PATCH /api/appointments/:id/cancel', () => {
 
 		expect(res.status).toBe(200);
 		expect(res.body.appointment.status).toBe('cancelled_by_owner');
+	});
+});
+
+describe('Flujo paseador: completar y cancelar', () => {
+	it('el paseador completa una solicitud walker_request', async () => {
+		const owner = await createOwner();
+		const walker = await createWalkerProvider();
+		const pet = await createPet(owner);
+		const appointment = await createConfirmedAppointment({
+			owner,
+			provider: walker,
+			pet,
+			status: 'confirmed'
+		});
+
+		const res = await api()
+			.patch(`/api/appointments/${appointment._id}/provider/complete-walker`)
+			.set(buildAuthHeader(walker));
+
+		expect(res.status).toBe(200);
+		expect(res.body.appointment.status).toBe('completed');
+	});
+
+	it('el proveedor cancela con cancellationReason', async () => {
+		const owner = await createOwner();
+		const walker = await createWalkerProvider();
+		const pet = await createPet(owner);
+		const appointment = await createConfirmedAppointment({ owner, provider: walker, pet });
+
+		const res = await api()
+			.patch(`/api/appointments/${appointment._id}/provider/cancel`)
+			.set(buildAuthHeader(walker))
+			.send({ cancellationReason: 'Lluvia intensa' });
+
+		expect(res.status).toBe(200);
+		expect(res.body.appointment.status).toBe('cancelled_by_provider');
+	});
+});
+
+describe('Reseñas de citas', () => {
+	it('GET review-eligibility indica canReview en cita completada', async () => {
+		const owner = await createOwner();
+		const vet = await createVetProvider();
+		const pet = await createPet(owner);
+		const appointment = await createCompletedAppointment({
+			owner,
+			provider: vet,
+			pet,
+			bookingSource: 'availability_slot'
+		});
+
+		const res = await api()
+			.get(`/api/appointments/${appointment._id}/review-eligibility`)
+			.set(buildAuthHeader(owner));
+
+		expect(res.status).toBe(200);
+		expect(res.body.canReview).toBe(true);
+		expect(res.body.hasReview).toBe(false);
+	});
+
+	it('POST reviews crea reseña y responde 409 en duplicado', async () => {
+		const owner = await createOwner();
+		const vet = await createVetProvider();
+		const pet = await createPet(owner);
+		const appointment = await createCompletedAppointment({
+			owner,
+			provider: vet,
+			pet,
+			bookingSource: 'availability_slot'
+		});
+
+		const first = await api()
+			.post(`/api/appointments/${appointment._id}/reviews`)
+			.set(buildAuthHeader(owner))
+			.send({ rating: 5, comment: 'Excelente atención' });
+		expect(first.status).toBe(201);
+
+		const dup = await api()
+			.post(`/api/appointments/${appointment._id}/reviews`)
+			.set(buildAuthHeader(owner))
+			.send({ rating: 4, comment: 'Segunda reseña' });
+		expect(dup.status).toBe(409);
+		expect(dup.body.message).toMatch(/ya existe/i);
 	});
 });

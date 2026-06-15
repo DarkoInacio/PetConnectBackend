@@ -51,6 +51,46 @@ describe('PUT /api/proveedores/mi-perfil', () => {
 	});
 });
 
+describe('GET /api/proveedores/:id/perfil y /perfil/:tipo/:slug', () => {
+	it('expone perfil público por id', async () => {
+		const vet = await createVetProvider({
+			providerProfile: {
+				isPublished: true,
+				publicSlug: 'vet-publica-jest',
+				description: 'Clínica visible',
+				address: {
+					city: 'Santiago',
+					commune: 'Providencia',
+					coordinates: { lat: -33.4489, lng: -70.6693 }
+				}
+			}
+		});
+
+		const res = await api().get(`/api/proveedores/${vet._id}/perfil`);
+		expect(res.status).toBe(200);
+		expect(res.body.proveedor).toBeDefined();
+	});
+
+	it('expone perfil público por slug', async () => {
+		await createVetProvider({
+			providerProfile: {
+				isPublished: true,
+				publicSlug: 'clinica-slug-jest',
+				description: 'Por slug',
+				address: {
+					city: 'Santiago',
+					commune: 'Providencia',
+					coordinates: { lat: -33.4489, lng: -70.6693 }
+				}
+			}
+		});
+
+		const res = await api().get('/api/proveedores/perfil/veterinaria/clinica-slug-jest');
+		expect(res.status).toBe(200);
+		expect(res.body.proveedor).toBeDefined();
+	});
+});
+
 describe('POST /api/proveedores/solicitar-servicio', () => {
 	it('responde 401 sin autenticación', async () => {
 		const res = await api().post('/api/proveedores/solicitar-servicio').send({});
